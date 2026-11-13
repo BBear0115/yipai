@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+.DS_Store
+__pycache__/
+*.pyc
+backend/data/
+# Public research page snapshots; cleaned text evidence is versioned instead.
+research/onepage/*.html

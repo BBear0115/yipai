@@ -1,0 +1,74 @@
+# 衣拍：手机前端与 Image2 后端
+
+当前版本已经接入真实 Image2 生图，不再使用前端合成模拟结果。
+
+底部导航已更新为「我的 / 上传 / 社区」。个人信息与历史在「我的」，社区支持效果图、商品原图和心得的主动发布与撤回。详见 [个人页与社区说明](../衣拍_个人页与社区说明_v1.1.md)。
+
+## 启动
+
+在项目根目录执行：
+
+```sh
+python3 -m pip install -r requirements.txt
+python3 backend/server.py
+```
+
+打开 `http://localhost:8000/`。不要再用 `python3 -m http.server`：静态服务器没有生成接口。
+
+在项目根目录 `.env.local` 设置以下两个服务端变量（文件已被 Git 忽略）：
+
+```dotenv
+IMAGE2_GATEWAY_API_KEY=<密钥>
+IMAGE2_UUAP_ID=<接入方标识>
+```
+
+也可通过 `IMAGE2_ENV_FILE=/绝对路径/.env.local` 指定已有配置文件。环境变量优先于文件，密钥不会返回前端。`YIPAI_PORT` 默认 `8000`；`YIPAI_DATA_DIR` 默认为 `backend/data`。
+
+## 已实现
+
+- 无登录的匿名会话，HttpOnly Cookie；不同访客任务和原图、成品图互相隔离。
+- 上传商品原图，附加所选男女模特参考图，向指定网关发送 `gpt-image-2` 请求。
+- 异步任务与轮询，离开页面或刷新后仍可在创作历史找回；SQLite 持久化。
+- 单用户最多一个进行中任务，全局最多十个排队任务、两个并发调用。
+- 幂等提交，重发相同请求编号不会再次调用模型。
+- 输入格式、体积、尺寸与解码校验；原图去除附带元数据。
+- 使用 `1024x1536` 竖版输出、`high` 质量及 300 秒请求超时。
+- 服务端在成品像素中合成“衣拍 · 人工智能生成”水印；成功任务只交付带水印图片。
+- 重新生成复用原商品和模特；旧结果不覆盖。保存和分享均使用服务端成品。
+- 失败状态、删除历史记录；运行中任务禁止删除。
+- 服务进程重启时，把尚未完成的本地任务标为失败，不自动重复调用计费接口。
+- 手机端创作工作台、图片全屏查看和任务路由恢复；页面细节和验收记录见 [前端优化验收](../testing/2026-11-11/前端优化验收.md)。
+
+## API
+
+| 方法与路径 | 用途 |
+|---|---|
+| GET `/api/session` | 建立匿名会话，返回配置是否可用，不返回密钥 |
+| POST `/api/jobs` | 参数：`image` Data URL、`model` (`female` / `male`)、UUID `idempotencyKey` |
+| GET `/api/jobs` | 当前访客最近 100 条任务 |
+| GET `/api/jobs/{id}` | 状态：queued、running、succeeded、failed |
+| GET `/api/jobs/{id}/input` | 当前访客的原商品图 |
+| GET `/api/jobs/{id}/result` | 成功任务的带水印结果 |
+| DELETE `/api/jobs/{id}` | 删除当前访客的已结束任务与其图片 |
+
+## 验证
+
+```sh
+python3 -m unittest discover -s backend -v
+node --check mockup/app.js
+node --test testing/frontend.test.cjs
+```
+
+自动化测试使用隔离临时数据库和模拟网关，不产生模型费用。真实服装生成与手机端流程测试结果见 [2026 年 11 月 10 日测试报告](../testing/2026-11-10/测试报告.md)；真实测试会产生模型调用。
+
+无费用的交互预览可运行 `python3 testing/preview_server.py --port 8018`，会显示记录图片和模拟排队/生成状态，数据存入临时目录。增加 `--empty` 查看空工作台；增加 `--large-text` 可验证 200% 根字号。预览服务不会访问图像生成服务。
+
+## 当前边界
+
+本地单进程版本只绑定回环地址，尚未部署公网。依赖当前浏览器会话找回历史；清除 Cookie 或换设备后无法恢复。暂不含付费额度、多人账号、自动内容审核或 HEIC 服务端转码。商品还原效果仍需人工核对，API 成功不等同于所有商品细节准确。
+
+后端依赖 macOS 的苹方字体绘制中文水印；跨系统部署时需配置可用中文字体并验证水印。正式公开服务需另外配置 HTTPS、进程托管、持久化存储、清理策略及供应商配额。
+
+## 模特卡素材
+
+`python3 scripts/generate_models.py` 使用同一网关生成主页男女模特素材；`--dry-run` 只做配置预检，已存在素材会跳过。提示词见 `scripts/model-prompts.json`。

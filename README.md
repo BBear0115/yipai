@@ -1,0 +1,82 @@
+# 衣拍 Yipai
+
+手机优先的 AI 模特商品图工具：上传服装商品图、选择男女模特、生成模特上身图，并对照原图检查、保存或发布到社区。
+
+![衣拍商品原图与生成效果对照](testing/2026-11-10/quality-overview.jpg)
+
+## 功能
+
+- 创作工作台：上传入口、草稿继续、进行中任务和创作历史。
+- 图片生成：男女模特参考、异步排队、状态轮询和失败重试。
+- 结果检查：商品原图切换、全屏放大、下载和系统分享。
+- 社区：主动发布效果图、商品原图和心得；支持撤回。
+- 可靠性：匿名会话隔离、幂等提交、单用户单进行中任务和服务端水印。
+- 响应式界面：手机底部导航，平板与桌面使用宽工作区。
+
+## 快速预览（无需生图密钥）
+
+需要 Python 3.9+；建议使用独立虚拟环境。
+
+```sh
+git clone https://github.com/BBear0115/yipai.git
+cd yipai
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install -r requirements.txt
+python3 testing/preview_server.py --port 8018
+```
+
+打开 <http://127.0.0.1:8018/>。预览使用已有测试图片模拟排队和生成，不调用图片服务、不产生生图费用，数据保存在临时目录并在退出后清理。可增加 `--empty` 查看空工作台，或 `--large-text` 检查 200% 根字号布局。
+
+## 启用真实图片生成
+
+```sh
+cp .env.example .env.local
+# 在 .env.local 中填写自己的 IMAGE2_GATEWAY_API_KEY 和 IMAGE2_UUAP_ID
+python3 backend/server.py
+```
+
+打开 <http://127.0.0.1:8000/>。真实生成通过代码配置的 Image2 网关调用 `gpt-image-2`，需要相应接入权限，并可能产生供应商费用；普通静态服务器无法运行生成接口。密钥只保存在服务端，环境变量优先于 `.env.local`。
+
+默认数据目录为 `backend/data/`；可用 `YIPAI_DATA_DIR` 指定其他目录，用 `YIPAI_PORT` 修改端口，用 `IMAGE2_ENV_FILE` 指定配置文件。真实服务在 macOS 上使用苹方字体合成中文水印；其他系统需要按源码配置可用的中文字体并验证水印。
+
+## 技术与目录
+
+当前使用原生 HTML/CSS/JavaScript、Python 标准库 HTTP 服务、SQLite、Pillow 和本地文件存储，无前端构建步骤。
+
+```text
+mockup/       手机优先前端、模特与社区示例素材
+backend/      任务与社区 API、图片处理、自动化测试
+scripts/      模特素材生成脚本和提示词
+testing/      隔离预览、前端测试、记录图片与验收报告
+research/     Onepage 竞品调研依据与公开资料留存
+```
+
+流程为：上传校验 → 幂等建任务 → 限流队列 → 图片生成 → 水印处理 → 原图对照 → 保存或主动发布。接口与配置细节见 [运行及 API 说明](mockup/README.md)。
+
+## 测试
+
+安装依赖后执行；JavaScript 检查另需 Node.js 18+。
+
+```sh
+python3 -m unittest discover -s backend -v
+node --check mockup/app.js
+node --check mockup/community.js
+node --test testing/frontend.test.cjs
+```
+
+当前后端 17 项、前端 13 项自动化测试通过；测试使用模拟网关和临时数据库。手机交互验证使用记录素材与模拟任务，没有额外调用生图服务，详见 [前端优化验收](testing/2026-11-11/前端优化验收.md)。`testing/2026-11-10/run_live.py`、`generate_fixtures.py` 和 `scripts/generate_models.py` 属于真实服务测试或素材生成脚本，执行时可能产生费用。
+
+## 项目文档
+
+- [Onepage（末尾含 Demo）](衣拍_Yipai_Onepage.md)
+- [产品说明](衣拍_产品说明文档_v1.0.md)
+- [PRD](衣拍_AI模特生图工具_PRD_v1.0.md)
+- [个人页与社区说明](衣拍_个人页与社区说明_v1.1.md)
+- [真实生成测试报告](testing/2026-11-10/测试报告.md)
+- [前端优化验收与手机截图](testing/2026-11-11/前端优化验收.md)
+- [竞品调研依据与测算口径](research/onepage/调研依据与测算口径.md)
+
+## 当前边界
+
+这是本地单进程演示版本，默认只监听回环地址。历史依赖当前浏览器 Cookie，尚不含跨设备账号、支付、批量生成或自动质检；生成结果需人工核对商品细节。测试商品原图为 AI 合成素材，生成效果不能替代真实商家样本的质量验证。公网部署还需配置 HTTPS、进程托管、持久化存储和供应商配额。

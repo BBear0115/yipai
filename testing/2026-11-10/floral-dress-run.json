@@ -1,0 +1,14 @@
+{
+  "job": {
+    "id": "7055db5987aa4ff683fc0eee96496e71",
+    "model": "female",
+    "status": "succeeded",
+    "created": "2026-11-10T08:29:31.672989+00:00",
+    "error": null,
+    "original": "/api/jobs/7055db5987aa4ff683fc0eee96496e71/input",
+    "image": "/api/jobs/7055db5987aa4ff683fc0eee96496e71/result"
+  },
+  "elapsed_seconds": 80.2,
+  "idempotency_passed": true,
+  "history_passed": true
+}

@@ -1,0 +1,65 @@
+test_concurrent_duplicate_and_delete (test_server.BackendTests) ... ok
+test_configuration_and_private_data_not_served_as_static_files (test_server.BackendTests) ... ok
+test_disguised_gif_is_rejected (test_server.BackendTests) ... ok
+test_gateway_failure_does_not_publish_raw_error (test_server.BackendTests) ... ok
+test_gateway_output_decode (test_server.BackendTests) ... ok
+test_generation_request_uses_product_and_model (test_server.BackendTests) ... ok
+test_idempotency_and_private_history (test_server.BackendTests) ... ok
+test_input_rejects_corrupt_small_and_nonimage (test_server.BackendTests) ... ok
+test_invalid_options_and_oversize_body (test_server.BackendTests) ... ok
+test_malformed_request_is_rejected_without_creating_job (test_server.BackendTests) ... ok
+test_queue_limit_and_wrong_origin (test_server.BackendTests) ... ok
+test_restart_resolves_incomplete_task (test_server.BackendTests) ... ok
+test_session_cookie_is_http_only_and_same_site (test_server.BackendTests) ... ok
+test_unconfigured_service_fails_without_job (test_server.BackendTests) ... ok
+test_watermark_is_in_exported_pixels (test_server.BackendTests) ... ok
+
+----------------------------------------------------------------------
+Ran 15 tests in 0.724s
+
+OK
+127.0.0.1 - "GET /api/session HTTP/1.1" 200 -
+127.0.0.1 - "POST /api/jobs HTTP/1.1" 200 -
+127.0.0.1 - "POST /api/jobs HTTP/1.1" 202 -
+127.0.0.1 - "DELETE /api/jobs/fb4465721f9d44b9ada5cc044051adb7 HTTP/1.1" 409 -
+127.0.0.1 - "DELETE /api/jobs/fb4465721f9d44b9ada5cc044051adb7 HTTP/1.1" 200 -
+127.0.0.1 - "GET /api/session HTTP/1.1" 200 -
+127.0.0.1 - "GET /.env.local HTTP/1.1" 404 -
+127.0.0.1 - "GET /../.env.local HTTP/1.1" 404 -
+127.0.0.1 - code 404, message File not found
+127.0.0.1 - "GET /backend/data/jobs.sqlite3 HTTP/1.1" 404 -
+127.0.0.1 - "GET /api/missing HTTP/1.1" 404 -
+Image2 request=20c2f6f2-06f6-4f65-bffd-6cb108a88b9f http=500
+Image2 request=9c1959f8-5b04-4155-a598-8dc15bbf41b5 status=success
+127.0.0.1 - "GET /api/session HTTP/1.1" 200 -
+127.0.0.1 - "GET /api/session HTTP/1.1" 200 -
+127.0.0.1 - "POST /api/jobs HTTP/1.1" 202 -
+127.0.0.1 - "POST /api/jobs HTTP/1.1" 200 -
+127.0.0.1 - "GET /api/jobs HTTP/1.1" 200 -
+127.0.0.1 - "GET /api/jobs/a6d9c5b964ae4c899351876aba946311 HTTP/1.1" 404 -
+127.0.0.1 - "GET /api/jobs/a6d9c5b964ae4c899351876aba946311/input HTTP/1.1" 404 -
+127.0.0.1 - "GET /api/jobs/a6d9c5b964ae4c899351876aba946311/result HTTP/1.1" 404 -
+127.0.0.1 - "GET /api/jobs HTTP/1.1" 200 -
+127.0.0.1 - "GET /api/jobs/a6d9c5b964ae4c899351876aba946311/input HTTP/1.1" 200 -
+127.0.0.1 - "GET /api/session HTTP/1.1" 200 -
+127.0.0.1 - "POST /api/jobs HTTP/1.1" 400 -
+127.0.0.1 - "POST /api/jobs HTTP/1.1" 400 -
+127.0.0.1 - "POST /api/jobs HTTP/1.1" 400 -
+127.0.0.1 - "POST /api/jobs HTTP/1.1" 400 -
+127.0.0.1 - "GET /api/session HTTP/1.1" 200 -
+127.0.0.1 - "POST /api/jobs HTTP/1.1" 400 -
+127.0.0.1 - "POST /api/jobs HTTP/1.1" 400 -
+127.0.0.1 - "POST /api/jobs HTTP/1.1" 400 -
+127.0.0.1 - "POST /api/jobs HTTP/1.1" 400 -
+127.0.0.1 - "GET /api/jobs HTTP/1.1" 200 -
+127.0.0.1 - "GET /api/session HTTP/1.1" 200 -
+127.0.0.1 - "POST /api/jobs HTTP/1.1" 202 -
+127.0.0.1 - "POST /api/jobs HTTP/1.1" 429 -
+127.0.0.1 - "POST /api/jobs HTTP/1.1" 403 -
+127.0.0.1 - "GET /api/session HTTP/1.1" 200 -
+127.0.0.1 - "POST /api/jobs HTTP/1.1" 202 -
+127.0.0.1 - "GET /api/jobs/ea53af26b6d44c228e486f19df50c5f6 HTTP/1.1" 200 -
+127.0.0.1 - "GET /api/session HTTP/1.1" 200 -
+127.0.0.1 - "GET /api/session HTTP/1.1" 200 -
+127.0.0.1 - "POST /api/jobs HTTP/1.1" 503 -
+127.0.0.1 - "GET /api/jobs HTTP/1.1" 200 -

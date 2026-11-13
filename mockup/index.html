@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#ffffff" />
+  <title>衣拍</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <main id="app" aria-live="polite"></main>
+    <nav id="dock" class="dock" aria-label="主导航">
+      <button id="my-tab" class="dock-item active" type="button" aria-label="创作工作台" aria-current="page">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M4.5 21c.3-4.5 3-7 7.5-7s7.2 2.5 7.5 7"/></svg><span>我的</span>
+      </button>
+      <button id="camera-tab" class="camera-button" type="button" aria-label="上传商品图片">
+        <svg viewBox="0 0 28 28" aria-hidden="true"><path d="M4 8.5h4l1.7-2.5h8.6L20 8.5h4v13H4z"/><circle cx="14" cy="15" r="4.2"/></svg><span>开拍</span>
+      </button>
+      <button id="community-tab" class="dock-item" type="button" aria-label="社区">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg><span>社区</span>
+      </button>
+    </nav>
+    <input id="file-input" type="file" accept="image/*,.heic,.heif" hidden />
+    <div id="toast" class="toast" role="status"></div>
+  </div>
+  <script src="community.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

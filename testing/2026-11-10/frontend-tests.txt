@@ -1,0 +1,40 @@
+TAP version 13
+# Subtest: in-flight submission remains locked when history sync finishes
+ok 1 - in-flight submission remains locked when history sync finishes
+  ---
+  duration_ms: 44.083834
+  type: 'test'
+  ...
+# Subtest: ambiguous network failure reuses idempotency key and selected model
+ok 2 - ambiguous network failure reuses idempotency key and selected model
+  ---
+  duration_ms: 1.863375
+  type: 'test'
+  ...
+# Subtest: regeneration sends the original image and original model
+ok 3 - regeneration sends the original image and original model
+  ---
+  duration_ms: 2.127833
+  type: 'test'
+  ...
+# Subtest: unsupported native sharing opens save-and-forward fallback
+ok 4 - unsupported native sharing opens save-and-forward fallback
+  ---
+  duration_ms: 1.383458
+  type: 'test'
+  ...
+# Subtest: cancelled native share does not trigger an error or download
+ok 5 - cancelled native share does not trigger an error or download
+  ---
+  duration_ms: 1.540625
+  type: 'test'
+  ...
+1..5
+# tests 5
+# suites 0
+# pass 5
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 102.185917

@@ -1,0 +1,14 @@
+{
+  "job": {
+    "id": "0a120cbffa3f46ffafaa55ea5eb90146",
+    "model": "male",
+    "status": "succeeded",
+    "created": "2026-11-10T08:31:09.961652+00:00",
+    "error": null,
+    "original": "/api/jobs/0a120cbffa3f46ffafaa55ea5eb90146/input",
+    "image": "/api/jobs/0a120cbffa3f46ffafaa55ea5eb90146/result"
+  },
+  "elapsed_seconds": 104.3,
+  "idempotency_passed": true,
+  "history_passed": true
+}
