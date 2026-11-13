@@ -15,19 +15,18 @@ python3 backend/server.py
 
 打开 `http://localhost:8000/`。不要再用 `python3 -m http.server`：静态服务器没有生成接口。
 
-在项目根目录 `.env.local` 设置以下两个服务端变量（文件已被 Git 忽略）：
+在项目根目录 `.env.local` 设置服务端 API Key（文件已被 Git 忽略）：
 
 ```dotenv
 IMAGE2_GATEWAY_API_KEY=<密钥>
-IMAGE2_UUAP_ID=<接入方标识>
 ```
 
-也可通过 `IMAGE2_ENV_FILE=/绝对路径/.env.local` 指定已有配置文件。环境变量优先于文件，密钥不会返回前端。`YIPAI_PORT` 默认 `8000`；`YIPAI_DATA_DIR` 默认为 `backend/data`。
+也可通过 `IMAGE2_ENV_FILE=/绝对路径/.env.local` 指定已有配置文件。若网关要求接入方标识，可额外设置 `IMAGE2_UUAP_ID`。环境变量优先于文件，密钥不会返回前端。`YIPAI_PORT` 默认 `8000`；`YIPAI_DATA_DIR` 默认为 `backend/data`。
 
 ## 已实现
 
 - 无登录的匿名会话，HttpOnly Cookie；不同访客任务和原图、成品图互相隔离。
-- 上传商品原图，附加所选男女模特参考图，向指定网关发送 `gpt-image-2` 请求。
+- 上传商品原图，附加所选男女模特参考图，向指定网关发送 `gpt-image-2.5-flare` 请求。
 - 异步任务与轮询，离开页面或刷新后仍可在创作历史找回；SQLite 持久化。
 - 单用户最多一个进行中任务，全局最多十个排队任务、两个并发调用。
 - 幂等提交，重发相同请求编号不会再次调用模型。
@@ -69,6 +68,32 @@ node --test testing/frontend.test.cjs
 
 后端依赖 macOS 的苹方字体绘制中文水印；跨系统部署时需配置可用中文字体并验证水印。正式公开服务需另外配置 HTTPS、进程托管、持久化存储、清理策略及供应商配额。
 
-## 模特卡素材
+## 模特管理
+
+### 初始化预设模特
+
+首次运行或重置数据库后，需要初始化预设模特：
+
+```sh
+python3 scripts/init_preset_models.py --existing-only
+```
+
+该命令将 `mockup/assets/female-model.png` 和 `male-model.png` 注册到数据库的 `models` 表，用户可在前端模特选择界面看到这两个预设模特。
+
+脚本支持以下选项：
+
+- `--dry-run`：预检模式，不实际写入数据库
+- `--existing-only`：仅注册现有模特图片，不生成新的
+- `--generate N`：通过 Image2 生成 N 个多样化预设模特（需配置 API Key）
+
+生成多样化预设模特示例：
+
+```sh
+python3 scripts/init_preset_models.py --generate 8
+```
+
+脚本会自动检查重复，重复运行不会重复插入相同模特。
+
+### 模特卡素材生成
 
 `python3 scripts/generate_models.py` 使用同一网关生成主页男女模特素材；`--dry-run` 只做配置预检，已存在素材会跳过。提示词见 `scripts/model-prompts.json`。

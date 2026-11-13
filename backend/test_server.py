@@ -209,7 +209,7 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(recovered['status'],'failed')
         self.assertIn('重启',recovered['error'])
 
-    @patch.object(server,'credentials',return_value=('test-key','test-id'))
+    @patch.object(server,'credentials',return_value=('test-key',None))
     def test_generation_request_uses_product_and_model(self,credentials):
         job_id=uuid4().hex;timestamp=server.now()
         with server.connect() as db:
@@ -219,7 +219,8 @@ class BackendTests(unittest.TestCase):
         with patch.object(server,'urlopen',return_value=response) as call:
             server.generate(job_id,'male')
             req=call.call_args.args[0];payload=json.loads(req.data)
-            self.assertEqual(payload['model'],'gpt-image-2')
+            self.assertEqual(payload['model'],'gpt-image-2.5-flare')
+            self.assertIsNone(req.get_header('Uuap-id'))
             content=payload['input'][0]['content']
             self.assertEqual([item['type'] for item in content],['input_text','input_image','input_image'])
             self.assertIn('成年男性',content[0]['text'])
@@ -240,6 +241,28 @@ class BackendTests(unittest.TestCase):
         with self.assertRaises(HTTPError) as error:
             client.open(Request(self.base+'/api/jobs',data=b'{}',headers={'Origin':'https://unrelated.invalid'},method='POST'))
         self.assertEqual(error.exception.code,403)
+
+    @patch.object(server,'credentials',return_value=('test-key',None))
+    def test_background_change_workflow(self,credentials):
+        job_id=uuid4().hex;timestamp=server.now()
+        with server.connect() as db:
+            db.execute('INSERT INTO jobs(id,visitor,idem,model,status,created,updated) VALUES(?,?,?,?,?,?,?)',(job_id,'test',str(uuid4()),'female','queued',timestamp,timestamp))
+        server.data_path(job_id,'input').write_bytes(source())
+        response=BytesIO(json.dumps({'output':[{'result':base64.b64encode(source((1024,1536))).decode()}]}).encode())
+        with patch.object(server,'urlopen',return_value=response) as call:
+            server.generate(job_id,'female','background_change',{'scene_type':'outdoor_street'})
+            req=call.call_args.args[0];payload=json.loads(req.data)
+            self.assertEqual(payload['model'],'gpt-image-2.5-flare')
+            self.assertEqual(payload['size'],'1024x1536')
+            content=payload['input'][0]['content']
+            self.assertEqual([item['type'] for item in content],['input_text','input_image'])
+            self.assertIn('城市街道背景',content[0]['text'])
+            self.assertIn('保持图1的人物和服装完全不变',content[0]['text'])
+            self.assertTrue(content[1]['image_url'].startswith('data:image/'))
+        with server.connect() as db:
+            row=db.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
+        self.assertEqual(row['status'],'succeeded')
+        self.assertTrue(server.data_path(job_id,'result').is_file())
 
     @patch.object(server,'credentials',return_value=('test-key','test-id'))
     def test_gateway_failure_does_not_publish_raw_error(self,credentials):

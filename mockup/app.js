@@ -114,6 +114,29 @@ async function renderRoute() {
     catch (error) { if (version === routeVersion) pageError(error.message, app, communityPage); }
     return;
   }
+  if (parts[0] === 'tasks') {
+    await openTasksPage();
+    restore();
+    return;
+  }
+  if (parts[0] === 'workflows') {
+    setScreen('workflows');
+    renderWorkflowsHub();
+    restore();
+    return;
+  }
+  if (parts[0] === 'workflow') {
+    if (parts[1] === 'pose-variation') {
+      renderPoseVariationPage();
+      restore();
+      return;
+    }
+    if (parts[1] === 'background-change') {
+      renderBackgroundChangePage();
+      restore();
+      return;
+    }
+  }
   const validId = /^[a-f0-9]{32}$/.test(parts[1] || '');
   if ((parts[0] === 'job' || parts[0] === 'publish') && validId) {
     let job = history.find(item => item.id === parts[1]);
@@ -197,7 +220,7 @@ function bindHistory(root = app) {
   root.querySelectorAll('[data-job]').forEach(el => el.onclick = () => { const job = history.find(item => item.id === el.dataset.job); if (job) openJob(job); });
 }
 function renderMy() {
-  app.innerHTML = `<section class="page workspace"><header class="topbar"><a class="brand" href="#home"><span class="brand-symbol">${icon('camera')}</span>衣拍<span class="brand-note">商品的另一面</span></a><button class="profile-edit" id="edit-profile" aria-label="编辑昵称">${icon('user')}<span>${escapeHtml(nickname)}</span></button></header><div class="home-intro"><div><span class="eyebrow">你的随身商品摄影棚</span><h1>好商品，<br class="mobile-break">值得一张好照片。</h1><p>上传商品图，让模特替你展示。</p></div><div class="start-card" id="start-card"></div></div>${errorSlot}<div id="active-task"></div><div class="workspace-content"><section class="history-section"><div class="section-heading"><h2>创作历史 <span class="count" id="history-count"></span></h2><div class="heading-actions"><button class="text-button" id="show-example">查看效果示例 ${icon('arrow')}</button><button class="icon-button" id="refresh-history" aria-label="刷新创作历史">${icon('refresh')}</button></div></div><div id="history-content"></div></section><div id="example-content"></div></div></section>`;
+  app.innerHTML = `<section class="page workspace"><header class="topbar"><a class="brand" href="#home"><span class="brand-symbol">${icon('camera')}</span>衣拍<span class="brand-note">商品的另一面</span></a><div class="header-actions"><a class="tasks-link" href="#workflows" aria-label="工作流中心"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/></svg>工作流</a><a class="tasks-link" href="#tasks" aria-label="任务中心"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>任务</a><button class="profile-edit" id="edit-profile" aria-label="编辑昵称">${icon('user')}<span>${escapeHtml(nickname)}</span></button></div></header><div class="home-intro"><div><span class="eyebrow">你的随身商品摄影棚</span><h1>好商品，<br class="mobile-break">值得一张好照片。</h1><p>上传商品图，让模特替你展示。</p></div><div class="start-card" id="start-card"></div></div>${errorSlot}<div id="active-task"></div><div class="workspace-content"><section class="history-section"><div class="section-heading"><h2>创作历史 <span class="count" id="history-count"></span></h2><div class="heading-actions"><button class="text-button" id="show-example">查看效果示例 ${icon('arrow')}</button><button class="icon-button" id="refresh-history" aria-label="刷新创作历史">${icon('refresh')}</button></div></div><div id="history-content"></div></section><div id="example-content"></div></div></section>`;
   document.querySelector('#edit-profile').onclick = editProfile;
   document.querySelector('#refresh-history').onclick = refreshHome;
   document.querySelector('#show-example').onclick = () => postPage(examples[0]);
@@ -209,9 +232,10 @@ function updateHome() {
   if (signature === homeSignature) return;
   homeSignature = signature;
   const start = document.querySelector('#start-card');
-  start.innerHTML = `<div class="start-icon">${icon('camera')}</div><div><strong>${draft ? '这件商品，继续开拍' : '从一张商品图开始'}</strong><p>${draft ? '已保留当前商品与模特选择' : '平铺图、挂拍图都可以试试'}</p></div><button class="primary" id="start-create">${draft ? '继续创作' : '上传商品图'} ${icon('plus')}</button>${draft ? '<button class="text-button" id="change-product">换商品</button>' : '<span class="start-hint">上传 → 生成 → 保存</span>'}`;
+  start.innerHTML = `<div class="start-icon">${icon('camera')}</div><div><strong>${draft ? '这件商品，继续开拍' : '从一张商品图开始'}</strong><p>${draft ? '已保留当前商品与模特选择' : '平铺图、挂拍图都可以试试'}</p></div><button class="primary" id="start-create">${draft ? '继续创作' : '上传商品图'} ${icon('plus')}</button>${draft ? '<button class="text-button" id="change-product">换商品</button>' : '<button class="text-button" id="batch-upload">批量上传</button>'}`;
   document.querySelector('#start-create').onclick = () => draft ? prepare() : input.click();
   document.querySelector('#change-product')?.addEventListener('click', () => input.click());
+  document.querySelector('#batch-upload')?.addEventListener('click', openBatchUpload);
   const pending = sortedJobs().find(isPending);
   document.querySelector('#active-task').innerHTML = pending ? `<button class="task-banner" data-job="${pending.id}"><span class="spinner small"></span><span><strong>${statusLabel(pending)}</strong><small>你的${modelName(pending.model)}作品正在创作，点此查看</small></span>${icon('arrow')}</button>` : '';
   document.querySelector('#history-count').textContent = jobsLoaded ? history.length : '';
@@ -267,15 +291,28 @@ function selectModel(value) {
   });
 }
 function modelCards() {
-  return ['female', 'male'].map(value => `<div class="model-chip ${model === value ? 'selected' : ''}" role="button" tabindex="0" data-model="${value}" aria-pressed="${model === value}">${photo(`assets/${value}-model.png`, `${modelName(value)}形象`)}<span class="model-label">${modelName(value)}<span class="model-check">${model === value ? icon('check') : ''}</span></span></div>`).join('');
+  if (!selectedModelId || !allModels.length) {
+    return ['female', 'male'].map(value => `<div class="model-chip ${model === value ? 'selected' : ''}" role="button" tabindex="0" data-model="${value}" aria-pressed="${model === value}">${photo(`assets/${value}-model.png`, `${modelName(value)}形象`)}<span class="model-label">${modelName(value)}<span class="model-check">${model === value ? icon('check') : ''}</span></span></div>`).join('');
+  }
+  const selected = allModels.find(m => m.id === selectedModelId) || allModels[0];
+  return `<div class="model-chip selected" role="button" tabindex="0" data-open-picker aria-pressed="true">${photo(selected.image, selected.name)}<span class="model-label">${escapeHtml(selected.name)}<span class="model-check">${icon('check')}</span></span></div><button class="text-button" data-change-model>更换模特</button>`;
 }
 function renderPrepare() {
   setScreen('prepare');
   app.innerHTML = `<section class="page detail-page">${subTop('准备开拍')}<div class="prepare-layout"><section class="product-panel"><div class="section-heading"><h2>商品原图</h2><button class="text-button" id="replace">换一张 ${icon('refresh')}</button></div>${photo(draft, '上传的商品图片', 'product-preview')}<p class="muted image-note">商品完整、细节清楚，展示效果更好。</p></section><section class="configuration-panel"><span class="eyebrow">下一步，让商品上身</span><h2>选择出镜模特</h2><p class="muted">选好模特，就可以开始创作。</p><div class="compact-models">${modelCards()}</div>${errorSlot}<div class="bottom-action"><button id="generate" class="primary">生成图片 ${icon('arrow')}</button><p class="helper">一次生成一张，完成后可对照原图查看</p></div></section></div></section>`;
   bindHeader(); document.querySelector('#replace').onclick = () => input.click();
-  document.querySelector('#generate').onclick = () => void generate();
+  document.querySelector('#generate').onclick = () => {
+    const modelToUse = selectedModelId || model;
+    void generate(draft, modelToUse);
+  };
   document.querySelectorAll('[data-model]').forEach(button => button.onclick = () => selectModel(button.dataset.model));
+  document.querySelector('[data-open-picker]')?.addEventListener('click', openModelPicker);
+  document.querySelector('[data-change-model]')?.addEventListener('click', openModelPicker);
   watchImages();
+}
+function openModelPicker() {
+  const picker = renderModelPicker();
+  document.body.appendChild(picker);
 }
 function waiting() {
   setScreen('generating');

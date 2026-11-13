@@ -32,11 +32,11 @@ python3 testing/preview_server.py --port 8018
 
 ```sh
 cp .env.example .env.local
-# 在 .env.local 中填写自己的 IMAGE2_GATEWAY_API_KEY 和 IMAGE2_UUAP_ID
+# 在 .env.local 中填写 IMAGE2_GATEWAY_API_KEY
 python3 backend/server.py
 ```
 
-打开 <http://127.0.0.1:8000/>。真实生成通过代码配置的 Image2 网关调用 `gpt-image-2`，需要相应接入权限，并可能产生供应商费用；普通静态服务器无法运行生成接口。密钥只保存在服务端，环境变量优先于 `.env.local`。
+打开 <http://127.0.0.1:8000/>。真实生成通过 Image2 网关调用 `gpt-image-2.5-flare`，需要相应接入权限，并可能产生供应商费用；普通静态服务器无法运行生成接口。密钥只保存在服务端，环境变量优先于 `.env.local`。如网关要求接入方标识，可额外设置 `IMAGE2_UUAP_ID`。
 
 默认数据目录为 `backend/data/`；可用 `YIPAI_DATA_DIR` 指定其他目录，用 `YIPAI_PORT` 修改端口，用 `IMAGE2_ENV_FILE` 指定配置文件。真实服务在 macOS 上使用苹方字体合成中文水印；其他系统需要按源码配置可用的中文字体并验证水印。
 
