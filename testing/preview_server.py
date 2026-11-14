@@ -13,7 +13,9 @@ import tempfile
 import time
 from uuid import uuid4
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'backend'))
+project_root = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(project_root))
+sys.path.insert(0, str(project_root / 'backend'))
 import server
 
 parser = argparse.ArgumentParser(description=__doc__)
@@ -25,16 +27,39 @@ fixtures = server.ROOT / 'testing' / '2026-11-10'
 server.credentials = lambda: ('mock-only', 'mock-only')
 
 
-def simulate(job_id, model):
+def simulate(job_id, model, workflow_type='tryon', workflow_config=None):
     time.sleep(2)
     server.update_job(job_id, status='running')
     time.sleep(8)
     name = 'floral-dress' if model == 'female' else 'red-hoodie'
-    shutil.copyfile(fixtures / f'{name}-result.jpg', server.data_path(job_id, 'result'))
+    output = server.data_path(job_id, 'result')
+    if workflow_type == 'pose_variation':
+        count = (workflow_config or {}).get('pose_count', 4)
+        columns = 2 if count in (4, 6) else 3
+        rows = 2 if count == 4 else 3
+        with server.Image.open(fixtures / f'{name}-result.jpg') as source:
+            tile = server.ImageOps.fit(source.convert('RGB'), (400, 600))
+            sheet = server.Image.new('RGB', (columns * 400, rows * 600), '#f0f0f2')
+            for index in range(count):
+                sheet.paste(tile, ((index % columns) * 400, (index // columns) * 600))
+            sheet.save(output, 'JPEG', quality=90)
+    else:
+        shutil.copyfile(fixtures / f'{name}-result.jpg', output)
     server.update_job(job_id, status='succeeded')
 
 
 server.generate = simulate
+original_public_job = server.public_job
+
+
+def preview_public_job(row):
+    job = original_public_job(row)
+    if 'workflow_type' in row.keys() and row['workflow_type'] == 'background_change':
+        job['previewOnly'] = True
+    return job
+
+
+server.public_job = preview_public_job
 
 
 class PreviewHandler(server.Handler):

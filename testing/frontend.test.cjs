@@ -17,8 +17,10 @@ async function context() {
     setTimeout(){return 1;},clearTimeout(){},setInterval(){return 1;},
     fetch:async()=>({ok:true,json:async()=>({ready:true,jobs:[],posts:[]})})
   });
+  vm.runInContext('openBatchUpload=()=>{}',sandbox);
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../mockup/community.js'),'utf8'),sandbox);
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../mockup/app.js'),'utf8'),sandbox);
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'../mockup/workflows.js'),'utf8'),sandbox);
   await vm.runInContext('sessionReady',sandbox);
   vm.runInContext('waiting=()=>{};prepare=()=>{};toast=()=>{};pollJobs=async()=>{};',sandbox);
   return sandbox;
@@ -96,6 +98,64 @@ test('home workbench foregrounds upload and keeps example content clearly marked
   assert.match(html,/创作历史/);
   assert.match(html,/效果示例/);
   assert.doesNotMatch(html,/my-stats|profile-card/);
+});
+
+test('model library initializes only after app APIs and toast are available',()=>{
+  const html=fs.readFileSync(path.join(__dirname,'../mockup/index.html'),'utf8');
+  assert.ok(html.indexOf('app.js')<html.indexOf('models.js'));
+});
+
+test('pose workflow offers 4, 6, and 8 image counts',async()=>{
+  const ctx=await context();
+  vm.runInContext('renderPoseVariationPage()',ctx);
+  const html=vm.runInContext('app.innerHTML',ctx);
+  assert.deepEqual(Array.from(vm.runInContext('[...app.innerHTML.matchAll(/data-count="(\\d+)"/g)].map(match=>Number(match[1]))',ctx)),[4,6,8]);
+});
+
+test('background workflow exposes the six supported scene IDs',async()=>{
+  const ctx=await context();
+  assert.deepEqual(Array.from(vm.runInContext('sceneTypes.map(scene=>scene.id)',ctx)),['white','studio_gray','outdoor_street','indoor_minimal','beach','cafe']);
+  vm.runInContext('renderBackgroundChangePage()',ctx);
+  assert.match(vm.runInContext('app.innerHTML',ctx),/accept="image\/jpeg,image\/png,image\/webp"/);
+});
+
+test('background result keeps the chosen scene visible and labels mock output honestly',async()=>{
+  const ctx=await context();
+  vm.runInContext("renderResult({id:'bg',model:'female',status:'succeeded',created:new Date().toISOString(),image:'/result',original:'/input',workflowType:'background_change',workflowConfig:{scene_type:'beach'},previewOnly:true})",ctx);
+  const html=vm.runInContext('app.innerHTML',ctx);
+  assert.match(html,/背景替换 · 海边/);
+  assert.match(html,/本地界面预览使用固定样例图/);
+});
+
+test('recent task image retry controls are not nested inside the task link',async()=>{
+  const ctx=await context();
+  vm.runInContext("history=[{id:'recent',model:'female',status:'succeeded',created:new Date().toISOString(),image:'/api/jobs/recent/result'}]",ctx);
+  const html=vm.runInContext('renderWorkflowHistory()',ctx);
+  assert.match(html,/<article class="workflow-recent-item">/);
+  assert.equal((html.match(/<button\b/g)||[]).length,2);
+  assert.match(html,/<button class="workflow-recent-open"[^>]+data-recent-job="recent"/);
+});
+
+test('workflow submission sends typed config with an idempotency key and opens its returned job',async()=>{
+  const ctx=await context();
+  vm.runInContext(`
+    currentRoute='#workflow/pose-variation';
+    navigate=route=>{location.hash=route};
+    workflowUpload='data:image/jpeg;base64,test';
+    calls=[];
+    api=async(path,options)=>{
+      calls.push({path,options});
+      return {job:{id:'0123456789abcdef0123456789abcdef',status:'queued',created:'2026-11-11T00:00:00Z'}};
+    };
+  `,ctx);
+  await vm.runInContext("submitWorkflow('pose_variation',{pose_count:6})",ctx);
+  const body=JSON.parse(vm.runInContext('calls[0].options.body',ctx));
+  assert.equal(vm.runInContext('calls[0].path',ctx),'/api/jobs');
+  assert.equal(vm.runInContext('calls[0].options.method',ctx),'POST');
+  assert.equal(body.workflowType,'pose_variation');
+  assert.deepEqual(body.workflowConfig,{pose_count:6});
+  assert.ok(typeof body.idempotencyKey==='string'&&body.idempotencyKey.length>0);
+  assert.equal(vm.runInContext('location.hash',ctx),'#job/0123456789abcdef0123456789abcdef');
 });
 
 test('refreshing a task route reads the existing task and never posts generation',async()=>{

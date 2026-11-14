@@ -214,7 +214,8 @@ function examplePreview() {
   return `<section class="example-preview"><div class="section-heading"><h2>一件商品，换种呈现</h2><span class="tag">效果示例</span></div><div class="example-pair" id="view-example" role="button" tabindex="0" aria-label="查看连衣裙原图与模特效果示例"><span>${photo(examples[0].productImage, '连衣裙商品原图')}<small>商品原图</small></span><span class="pair-arrow">${icon('arrow')}</span><span>${photo(examples[0].image, '连衣裙模特效果示例')}<small>模特效果</small></span></div></section>`;
 }
 function historyCard(job) {
-  return `<article class="history-card" data-job-card="${job.id}"><div class="history-open" role="button" tabindex="0" data-job="${job.id}" aria-label="查看${modelName(job.model)}作品，${statusLabel(job)}"><span class="history-photo">${photo(job.image || job.original, '商品创作图片', '', true)}${isPending(job) || job.status === 'failed' ? `<span class="status-badge ${job.status}">${isPending(job) ? '<span class="status-dot"></span>' : ''}${statusLabel(job)}</span>` : ''}</span><span class="card-copy"><strong>${modelName(job.model)}作品</strong><time>${escapeHtml(job.date)}</time></span></div></article>`;
+  const title = typeof workflowJobName === 'function' ? workflowJobName(job) : `${modelName(job.model)}作品`;
+  return `<article class="history-card" data-job-card="${job.id}"><div class="history-open" role="button" tabindex="0" data-job="${job.id}" aria-label="查看${title}，${statusLabel(job)}"><span class="history-photo">${photo(job.image || job.original, '商品创作图片', '', true)}${isPending(job) || job.status === 'failed' ? `<span class="status-badge ${job.status}">${isPending(job) ? '<span class="status-dot"></span>' : ''}${statusLabel(job)}</span>` : ''}</span><span class="card-copy"><strong>${escapeHtml(title)}</strong><time>${escapeHtml(job.date)}</time></span></div></article>`;
 }
 function bindHistory(root = app) {
   root.querySelectorAll('[data-job]').forEach(el => el.onclick = () => { const job = history.find(item => item.id === el.dataset.job); if (job) openJob(job); });
@@ -341,6 +342,7 @@ async function pollJobs() {
       else { const title = document.querySelector('#task-status'); if (title) title.textContent = statusLabel(active); pageError(''); }
     }
     updateHome();
+    if ((screen === 'workflows' || screen === 'workflow-detail') && typeof refreshWorkflowRecent === 'function') refreshWorkflowRecent();
     if (screen !== 'result' && history.some(job => job.status === 'succeeded' && ['running','queued'].includes(previous.get(job.id)))) toast('图片已生成，可在创作历史查看');
   } catch (error) {
     pollError = '暂时连不上，任务可能仍在进行。';
@@ -358,7 +360,7 @@ async function sourceData(source) {
   const blob = await response.blob();
   return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(blob); });
 }
-async function generate(source = draft, choice = model) {
+async function generate(source = draft, choice = model, workflow = {}) {
   if (busy || submitting) {
     pageError('已有图片正在生成，请完成后再提交。'); return;
   }
@@ -370,9 +372,14 @@ async function generate(source = draft, choice = model) {
   pageError('');
   try {
     await sessionReady;
-    if (!pendingSubmission || pendingSubmission.source !== source || pendingSubmission.model !== choice) pendingSubmission = {source, model:choice, idempotencyKey:crypto.randomUUID()};
+    const workflowType = workflow.workflowType || 'tryon';
+    const workflowConfig = workflow.workflowConfig || null;
+    const submissionKey = JSON.stringify([source, choice, workflowType, workflowConfig]);
+    if (!pendingSubmission || pendingSubmission.key !== submissionKey) pendingSubmission = {source, model:choice, key:submissionKey, idempotencyKey:crypto.randomUUID()};
     const image = await sourceData(source);
-    const data = await api('/api/jobs', {method:'POST', body:JSON.stringify({image, model:choice, idempotencyKey:pendingSubmission.idempotencyKey})});
+    const payload = {image, model:choice, idempotencyKey:pendingSubmission.idempotencyKey};
+    if (workflowType !== 'tryon') Object.assign(payload, {workflowType, workflowConfig});
+    const data = await api('/api/jobs', {method:'POST', body:JSON.stringify(payload)});
     const submittedJob = mergeJob(data.job);
     pendingSubmission = null;
     if (draft === source) draft = null;
@@ -395,11 +402,17 @@ function failedPage(job) {
   active = job; setScreen('failed');
   app.innerHTML = `<section class="page detail-page">${subTop('未生成成功')}<div class="state-panel">${photo(job.original, '生成失败的商品', 'task-product')}<span class="failure-icon">${icon('warning')}</span><h1>这次没生成成功</h1><p>${escapeHtml(job.error || '请稍后重试，商品原图已保留。')}</p>${errorSlot}<button class="primary" id="retry">重新生成 ${icon('refresh')}</button><button class="text-button" id="return-home">返回工作台</button></div></section>`;
   bindHeader(); document.querySelector('#return-home').onclick = home;
-  document.querySelector('#retry').onclick = () => { void generate(job.original, job.model); }; watchImages();
+  document.querySelector('#retry').onclick = () => { void generate(job.original, job.model, {workflowType:job.workflowType, workflowConfig:job.workflowConfig}); }; watchImages();
 }
 function renderResult(job) {
   setScreen('result');
-  app.innerHTML = `<section class="page detail-page result-page">${subTop('你的新作品', home, true)}<div class="result-layout"><div class="result-main"><div class="result-toolbar"><div class="segmented" aria-label="图片对照"><button class="selected" id="effect-tab" aria-pressed="true">效果图</button><button id="original-tab" aria-pressed="false">商品原图</button></div><button class="icon-button" id="zoom-result" aria-label="放大查看图片">${icon('zoom')}</button></div><div class="comparison-grid"><div class="result-image-column"><span class="desktop-image-label">模特效果</span><div id="result-primary" role="button" tabindex="0" aria-label="全屏查看效果图">${photo(job.image, '带衣拍水印的模特展示图', 'result-art')}</div></div><div class="desktop-original"><span class="desktop-image-label">商品原图</span><div role="button" tabindex="0" id="result-original" aria-label="全屏查看商品原图">${photo(job.original, '商品原图', 'result-art')}</div></div></div></div><aside class="result-side"><div class="result-summary"><span class="eyebrow">完成这一次创作</span><h2>让细节，也经得起看。</h2><p>发布前，对照原图检查颜色、图案和商品结构。</p><span class="result-meta">${modelName(job.model)} · ${escapeHtml(job.date)}</span></div>${errorSlot}<div class="result-actions"><button class="action-button" id="regenerate">${icon('refresh')}<span>重新生成</span></button><button class="action-button primary-action" id="save">${icon('save')}<span>保存图片</span></button><button class="action-button" id="share">${icon('share')}<span>分享转发</span></button></div></aside></div></section>`;
+  const outputTitle = typeof workflowJobName === 'function' ? workflowJobName(job) : '模特效果';
+  const outputMeta = typeof workflowNames === 'undefined' ? modelName(job.model) : (job.workflowType && job.workflowType !== 'tryon' ? workflowJobName(job) : modelName(job.model));
+  const inputLabel = job.workflowType && job.workflowType !== 'tryon' ? '输入图片' : '商品原图';
+  const previewNotice = job.previewOnly && job.workflowType === 'background_change'
+    ? '<p class="preview-output-notice" role="status">本地界面预览使用固定样例图，不会按所选场景生成背景。</p>'
+    : '';
+  app.innerHTML = `<section class="page detail-page result-page">${subTop('你的新作品', home, true)}<div class="result-layout"><div class="result-main"><div class="result-toolbar"><div class="segmented" aria-label="图片对照"><button class="selected" id="effect-tab" aria-pressed="true">效果图</button><button id="original-tab" aria-pressed="false">${inputLabel}</button></div><button class="icon-button" id="zoom-result" aria-label="放大查看图片">${icon('zoom')}</button></div><div class="comparison-grid"><div class="result-image-column"><span class="desktop-image-label">${escapeHtml(outputTitle)}</span><div id="result-primary" role="button" tabindex="0" aria-label="全屏查看效果图">${photo(job.image, '带衣拍水印的模特展示图', 'result-art')}</div></div><div class="desktop-original"><span class="desktop-image-label">${inputLabel}</span><div role="button" tabindex="0" id="result-original" aria-label="全屏查看${inputLabel}">${photo(job.original, inputLabel, 'result-art')}</div></div></div></div><aside class="result-side"><div class="result-summary"><span class="eyebrow">完成这一次创作</span><h2>让细节，也经得起看。</h2><p>发布前，对照原图检查颜色、图案和商品结构。</p>${previewNotice}<span class="result-meta">${escapeHtml(outputMeta)} · ${escapeHtml(job.date)}</span></div>${errorSlot}<div class="result-actions"><button class="action-button" id="regenerate">${icon('refresh')}<span>重新生成</span></button><button class="action-button primary-action" id="save">${icon('save')}<span>保存图片</span></button><button class="action-button" id="share">${icon('share')}<span>分享转发</span></button></div></aside></div></section>`;
   bindHeader(); let showingOriginal = false;
   const choose = original => {
     showingOriginal = original;
@@ -408,8 +421,8 @@ function renderResult(job) {
     document.querySelector('#effect-tab').setAttribute('aria-pressed', String(!original));
     document.querySelector('#original-tab').setAttribute('aria-pressed', String(original));
     const primary = document.querySelector('#result-primary');
-    primary.setAttribute('aria-label', `全屏查看${original ? '商品原图' : '效果图'}`);
-    primary.innerHTML = photo(original ? job.original : job.image, original ? '商品原图' : '带衣拍水印的模特展示图', 'result-art'); watchImages(primary);
+    primary.setAttribute('aria-label', `全屏查看${original ? inputLabel : '效果图'}`);
+    primary.innerHTML = photo(original ? job.original : job.image, original ? inputLabel : '带衣拍水印的模特展示图', 'result-art'); watchImages(primary);
   };
   document.querySelector('#effect-tab').onclick = () => choose(false);
   document.querySelector('#original-tab').onclick = () => choose(true);
@@ -419,7 +432,7 @@ function renderResult(job) {
   document.querySelector('#result-primary').onkeydown = event => { if (['Enter',' '].includes(event.key)) { event.preventDefault(); view(); } };
   document.querySelector('#result-original').onclick = () => openViewer(job, true);
   document.querySelector('#result-original').onkeydown = event => { if (['Enter',' '].includes(event.key)) { event.preventDefault(); openViewer(job, true); } };
-  document.querySelector('#regenerate').onclick = () => void generate(job.original, job.model);
+  document.querySelector('#regenerate').onclick = () => void generate(job.original, job.model, {workflowType:job.workflowType, workflowConfig:job.workflowConfig});
   document.querySelector('#save').onclick = () => save(job);
   document.querySelector('#share').onclick = () => shareOptions(job);
   document.querySelector('#more').onclick = () => sheet('作品操作', '', [{label:'发布到社区', action:() => publishPage(job)}, {label:'删除这张作品', danger:true, action:() => confirmDelete(job)}, {label:'取消'}]);
@@ -474,11 +487,12 @@ function sheet(title, body, buttons) {
 }
 function openViewer(item, original = false) {
   let showingOriginal = original, zoom = 1;
-  const layer = openOverlay(`<section class="viewer" role="dialog" aria-modal="true" aria-label="图片查看器"><header class="viewer-header"><div class="segmented"><button id="viewer-effect" aria-pressed="${!original}">效果图</button><button id="viewer-original" aria-pressed="${original}">商品原图</button></div><button class="icon-button" data-close aria-label="关闭图片查看器">${icon('close')}</button></header><div class="viewer-stage" tabindex="0" aria-label="图片查看区域，可滚动查看放大细节"><div class="viewer-canvas"></div></div><footer class="viewer-controls"><button class="secondary" id="zoom-out" aria-label="缩小图片">−</button><output id="zoom-level" aria-live="polite">100%</output><button class="secondary" id="zoom-in" aria-label="放大图片">＋</button><button class="secondary" id="zoom-reset">还原</button></footer></section>`, 'viewer-backdrop');
+  const inputLabel = item.workflowType && item.workflowType !== 'tryon' ? '输入图片' : '商品原图';
+  const layer = openOverlay(`<section class="viewer" role="dialog" aria-modal="true" aria-label="图片查看器"><header class="viewer-header"><div class="segmented"><button id="viewer-effect" aria-pressed="${!original}">效果图</button><button id="viewer-original" aria-pressed="${original}">${inputLabel}</button></div><button class="icon-button" data-close aria-label="关闭图片查看器">${icon('close')}</button></header><div class="viewer-stage" tabindex="0" aria-label="图片查看区域，可滚动查看放大细节"><div class="viewer-canvas"></div></div><footer class="viewer-controls"><button class="secondary" id="zoom-out" aria-label="缩小图片">−</button><output id="zoom-level" aria-live="polite">100%</output><button class="secondary" id="zoom-in" aria-label="放大图片">＋</button><button class="secondary" id="zoom-reset">还原</button></footer></section>`, 'viewer-backdrop');
   const update = () => {
     layer.querySelector('#viewer-effect').classList.toggle('selected', !showingOriginal); layer.querySelector('#viewer-original').classList.toggle('selected', showingOriginal);
     layer.querySelector('#viewer-effect').setAttribute('aria-pressed', String(!showingOriginal)); layer.querySelector('#viewer-original').setAttribute('aria-pressed', String(showingOriginal));
-    layer.querySelector('.viewer-canvas').innerHTML = photo(showingOriginal ? (item.original || item.productImage) : item.image, showingOriginal ? '商品原图' : '带水印的效果图');
+    layer.querySelector('.viewer-canvas').innerHTML = photo(showingOriginal ? (item.original || item.productImage) : item.image, showingOriginal ? inputLabel : '带水印的效果图');
     layer.querySelector('.viewer-canvas').style.setProperty('--zoom', zoom);
     layer.querySelector('#zoom-level').textContent = `${Math.round(zoom * 100)}%`;
     layer.querySelector('#zoom-out').disabled = zoom <= 1; layer.querySelector('#zoom-in').disabled = zoom >= 3;
@@ -535,4 +549,8 @@ sessionReady = (async () => {
   catch (error) { sessionError = error.message; }
 })();
 void renderRoute();
-void sessionReady.then(() => { updateHome(); if (busy) schedulePoll(); });
+void sessionReady.then(() => {
+  updateHome();
+  if ((screen === 'workflows' || screen === 'workflow-detail') && typeof refreshWorkflowRecent === 'function') refreshWorkflowRecent();
+  if (busy) schedulePoll();
+});

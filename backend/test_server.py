@@ -234,7 +234,8 @@ class BackendTests(unittest.TestCase):
     @patch.object(server,'credentials',return_value=('test-key','test-id'))
     @patch.object(server,'generate')
     def test_queue_limit_and_wrong_origin(self,generator,credentials):
-        client=self.client();self.post(client,self.payload())
+        client=self.client()
+        for _ in range(10): self.post(client,self.payload())
         with self.assertRaises(HTTPError) as error:
             self.post(client,self.payload())
         self.assertEqual(error.exception.code,429)
@@ -255,14 +256,30 @@ class BackendTests(unittest.TestCase):
             self.assertEqual(payload['model'],'gpt-image-2.5-flare')
             self.assertEqual(payload['size'],'1024x1536')
             content=payload['input'][0]['content']
-            self.assertEqual([item['type'] for item in content],['input_text','input_image'])
+            self.assertEqual([item['type'] for item in content],['input_text','input_image','input_image'])
             self.assertIn('城市街道背景',content[0]['text'])
-            self.assertIn('保持图1的人物和服装完全不变',content[0]['text'])
+            self.assertIn('保留图1同一张脸',content[0]['text'])
+            self.assertIn('保持图1原始画幅比例',content[0]['text'])
+            self.assertIn('服装固有色',content[0]['text'])
             self.assertTrue(content[1]['image_url'].startswith('data:image/'))
+            self.assertEqual(content[2]['image_url'],server.background_reference_url('outdoor_street'))
         with server.connect() as db:
             row=db.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
         self.assertEqual(row['status'],'succeeded')
         self.assertTrue(server.data_path(job_id,'result').is_file())
+
+    def test_background_scenes_have_valid_prompts_and_references(self):
+        scenes = ('white','studio_gray','outdoor_street','indoor_minimal','beach','cafe')
+        for scene in scenes:
+            with self.subTest(scene=scene):
+                prompt = server.build_background_change_prompt(scene)
+                self.assertIn('只换背景硬规则',prompt)
+                self.assertIn('只移除图1原背景',prompt)
+                self.assertIn('场景',prompt)
+        self.assertIsNone(server.background_reference_url('white'))
+        self.assertIsNone(server.background_reference_url('studio_gray'))
+        self.assertIsNone(server.background_reference_url('indoor_minimal'))
+        self.assertTrue(server.background_reference_url('beach').startswith('https://'))
 
     @patch.object(server,'credentials',return_value=('test-key','test-id'))
     def test_gateway_failure_does_not_publish_raw_error(self,credentials):

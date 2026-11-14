@@ -22,7 +22,7 @@ from uuid import uuid4
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps, UnidentifiedImageError
 
-from backend.workflows.background_change import build_background_change_prompt
+from backend.workflows.background_change import background_reference_url, build_background_change_prompt
 from backend.workflows.pose_variation import build_pose_variation_prompt
 from backend.workflows.retouch import build_product_retouch_prompt, build_material_enhancement_prompt
 from backend.workflows.fusion import build_outfit_fusion_prompt, build_product_set_prompt
@@ -284,6 +284,9 @@ def generate(job_id: str, model: str, workflow_type: str = 'tryon', workflow_con
                 scene_type = (workflow_config or {}).get('scene_type', 'white')
                 prompt_text = build_background_change_prompt(scene_type)
                 images = [image_data_url(data_path(job_id, 'input').read_bytes())]
+                reference_url = background_reference_url(scene_type)
+                if reference_url:
+                    images.append(reference_url)
                 size = '1024x1536'
             elif workflow_type == 'product_retouch':
                 mode = (workflow_config or {}).get('mode', 'faithful-retouch')
