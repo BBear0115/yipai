@@ -12,12 +12,49 @@ function refreshCommunity() {
   if (feed?.dataset.signature === signature) return;
   renderCommunity();
 }
+function timeAgo(created) {
+  const time = new Date(created).getTime();
+  if (!time) return '';
+  const minutes = Math.max(0, Math.floor((Date.now() - time) / 60000));
+  if (minutes < 1) return '刚刚';
+  if (minutes < 60) return `${minutes}分钟前`;
+  if (minutes < 1440) return `${Math.floor(minutes / 60)}小时前`;
+  if (minutes < 43200) return `${Math.floor(minutes / 1440)}天前`;
+  return new Date(time).toLocaleDateString('zh-CN', {month:'long', day:'numeric'});
+}
+// One post reads like a social feed entry: author row, swipeable effect/original photos, actions, then caption.
+function feedPost(post) {
+  const id = escapeHtml(post.id), name = escapeHtml(post.productName);
+  return `<article class="feed-post"><header class="feed-post-head"><span class="small-avatar">${escapeHtml(post.nickname.slice(0,1))}</span><strong>${escapeHtml(post.nickname)}</strong>${post.example?'<span class="example-tag">官方示例</span>':''}<button class="icon-button feed-post-more" data-more="${id}" aria-label="${name}的更多操作">${icon('more')}</button></header><div class="feed-slides" data-slides aria-label="${name}作品图片，左右滑动对照效果图与商品原图"><div class="feed-slide" role="button" tabindex="0" data-post="${id}" aria-label="查看${name}效果图">${photo(post.image, `${post.productName}模特效果图`, 'feed-result', true)}<span class="feed-slide-label">效果图</span></div><div class="feed-slide" role="button" tabindex="0" data-post="${id}" aria-label="查看${name}商品原图">${photo(post.productImage, `${post.productName}商品原图`, 'feed-original', true)}<span class="feed-slide-label">商品原图</span></div></div><div class="feed-dots" aria-hidden="true"><span class="current"></span><span></span></div><div class="feed-actions">${post.example?`<button class="feed-action" data-recreate="${id}">${icon('camera')}拍同款</button>`:''}<button class="feed-action" data-share="${id}" aria-label="分享${name}">${icon('send')}分享</button><button class="icon-button feed-save" data-save="${id}" aria-label="保存${name}效果图">${icon('save')}</button></div><p class="feed-caption"><strong>${escapeHtml(post.nickname)}</strong> <span>${name}</span> ${escapeHtml(post.note)}</p><div class="feed-meta">${post.example ? '官方示例' : escapeHtml(timeAgo(post.created))}<span aria-hidden="true">·</span><button data-post="${id}">查看详情</button></div></article>`;
+}
 function renderCommunity() {
   const all = [...posts, ...examples];
-  app.innerHTML = `<section class="page community-page"><header class="topbar"><div><span class="eyebrow">灵感与真实作品</span><h1 class="page-title">社区</h1></div><span class="community-subtitle">看效果，也看原图</span></header>${errorSlot}<div class="feed" data-signature="${escapeHtml(JSON.stringify(posts.map(post => post.id)))}">${all.map(post => `<article class="post-card"><div class="post-photo" role="button" tabindex="0" data-post="${escapeHtml(post.id)}" aria-label="查看${escapeHtml(post.productName)}作品">${photo(post.image, `${post.productName}模特效果图`, 'community-result', true)}<div class="original-thumb">${photo(post.productImage, '商品原图', '', true)}</div><span class="compare-hint">效果图 · 原图</span></div><div class="post-copy"><div class="post-author"><span class="small-avatar">${escapeHtml(post.nickname.slice(0,1))}</span><strong>${escapeHtml(post.nickname)}</strong>${post.example?'<span class="example-tag">官方示例</span>':''}</div><button class="post-title" data-post="${escapeHtml(post.id)}">${escapeHtml(post.productName)} ${icon('arrow')}</button><p>${escapeHtml(post.note)}</p><div class="post-bottom"><span class="muted">点开对照商品原图</span><button class="post-share" data-share="${escapeHtml(post.id)}" aria-label="分享${escapeHtml(post.productName)}">${icon('share')}分享</button></div></div></article>`).join('')}</div>${all.length ? '' : '<div class="empty-history">社区还没有作品，完成创作后可以分享你的效果。</div>'}</section>`;
-  document.querySelectorAll('[data-post]').forEach(button => button.onclick = () => postPage(findPost(button.dataset.post)));
+  app.innerHTML = `<section class="page community-page"><header class="topbar"><h1 class="page-title">社区</h1></header>${errorSlot}<div class="feed" data-signature="${escapeHtml(JSON.stringify(posts.map(post => post.id)))}">${all.map(feedPost).join('')}</div>${all.length ? '' : '<div class="empty-history">社区还没有作品，完成创作后可以分享你的效果。</div>'}</section>`;
+  document.querySelectorAll('[data-post]').forEach(button => {
+    button.onclick = () => postPage(findPost(button.dataset.post));
+    button.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); button.onclick(); } };
+  });
   document.querySelectorAll('[data-share]').forEach(button => button.onclick = () => share(findPost(button.dataset.share)));
+  document.querySelectorAll('[data-save]').forEach(button => button.onclick = () => save(findPost(button.dataset.save)));
+  document.querySelectorAll('[data-recreate]').forEach(button => button.onclick = () => recreatePost(findPost(button.dataset.recreate)));
+  document.querySelectorAll('[data-more]').forEach(button => button.onclick = () => postActions(findPost(button.dataset.more)));
+  document.querySelectorAll('[data-slides]').forEach(slides => {
+    const dots = slides.nextElementSibling.children;
+    slides.onscroll = () => {
+      const index = Math.round(slides.scrollLeft / Math.max(1, slides.clientWidth));
+      [...dots].forEach((dot, i) => dot.classList.toggle('current', i === index));
+    };
+  });
   watchImages();
+}
+function postActions(post) {
+  if (!post) return;
+  sheet(post.productName, '', [{label:'查看作品详情', action:() => postPage(post)}, {label:'分享图片', action:() => share(post)}, {label:'保存效果图', action:() => save(post)}, ...(post.mine ? [{label:'撤回发布', danger:true, action:() => withdrawPost(post)}] : []), {label:'取消'}]);
+}
+function withdrawPost(post) {
+  sheet('撤回这条发布？', '个人创作历史会保留。', [{label:'保留'}, {label:'撤回', danger:true, action:async () => {
+    await api(`/api/posts/${post.id}`, {method:'DELETE'}); posts = posts.filter(item => item.id !== post.id); communityPage(); toast('已撤回');
+  }}]);
 }
 function findPost(id) { return [...posts, ...examples].find(post => post.id === id); }
 function renderPost(post) {
@@ -29,9 +66,7 @@ function renderPost(post) {
   toggle.onclick = () => { const original = document.querySelector('#post-original'); original.hidden = !original.hidden; toggle.innerHTML = `${original.hidden ? '查看' : '收起'}商品原图 ${icon('arrow')}`; watchImages(original); };
   document.querySelector('#recreate-example')?.addEventListener('click', () => recreatePost(post));
   document.querySelector('#post-share').onclick = () => share(post);
-  document.querySelector('#withdraw')?.addEventListener('click', () => sheet('撤回这条发布？', '个人创作历史会保留。', [{label:'保留'}, {label:'撤回', danger:true, action:async () => {
-    await api(`/api/posts/${post.id}`, {method:'DELETE'}); posts = posts.filter(item => item.id !== post.id); communityPage(); toast('已撤回');
-  }}]));
+  document.querySelector('#withdraw')?.addEventListener('click', () => withdrawPost(post));
   watchImages();
 }
 function renderPublish(job) {

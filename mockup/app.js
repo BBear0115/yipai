@@ -9,6 +9,7 @@ const icons = {
   refresh: '<path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 6M4 12l2 6a7 7 0 0 0 12-1"/>',
   save: '<path d="M12 3v12m-4-4 4 4 4-4M4 16v5h16v-5"/>',
   share: '<path d="M12 15V3m-4 4 4-4 4 4M6 11H4v10h16V11h-2"/>',
+  send: '<path d="M21 3 3 10.5l7.5 3L21 3l-7.5 18-3-7.5"/>',
   more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
   close: '<path d="m6 6 12 12M6 18 18 6"/>',
   zoom: '<circle cx="10" cy="10" r="6"/><path d="m15 15 6 6M7 10h6m-3-3v6"/>',
@@ -193,12 +194,35 @@ function watchImages(root = app) {
   observeActions();
 }
 const homeSlides = [
-  {image:examples[0].image, alt:'模特身穿碎花连衣裙的效果示例'},
-  {image:examples[1].image, alt:'模特身穿蓝白条纹上衣的效果示例'},
-  {image:'assets/sample-generated.jpg', alt:'模特身穿蓝色短袖上衣的效果示例'}
+  {image:'assets/hero/gingham-dress.webp', alt:'模特身穿黑白格纹无袖连衣裙'},
+  {image:'assets/hero/linen-bicycle.webp', alt:'男模特身穿白色亚麻衬衫推着单车'},
+  {image:'assets/hero/plaid-beach.webp', alt:'模特身穿格纹西装外套和长裙站在海边'}
 ];
+const slideTones = new Map();
+// Measure the image area behind the logo once, and pick whichever logo color contrasts more.
+function slideTone(slide) {
+  if (!slideTones.has(slide.image)) {
+    slideTones.set(slide.image, loadImage(slide.image).then(img => {
+      const canvas = document.createElement('canvas'); canvas.width = 30; canvas.height = 40;
+      const context = canvas.getContext('2d', {willReadFrequently:true}); context.drawImage(img, 0, 0, 30, 40);
+      const data = context.getImageData(0, 0, 15, 5).data;
+      const linear = value => { value /= 255; return value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4; };
+      let total = 0;
+      for (let i = 0; i < data.length; i += 4) total += .2126 * linear(data[i]) + .7152 * linear(data[i + 1]) + .0722 * linear(data[i + 2]);
+      const luminance = total / (data.length / 4);
+      return (luminance + .05) / .05 > 1.05 / (luminance + .05) ? 'light' : 'dark';
+    }).catch(() => 'dark'));
+  }
+  return slideTones.get(slide.image);
+}
+async function applySlideTone(index) {
+  const tone = await slideTone(homeSlides[index]);
+  const hero = document.querySelector('#home-hero');
+  if (hero && index === carouselIndex) hero.dataset.tone = tone;
+}
 function showHomeSlide(index) {
   carouselIndex = (index + homeSlides.length) % homeSlides.length;
+  void applySlideTone(carouselIndex);
   const slides = document.querySelectorAll('.home-slide');
   const dots = document.querySelectorAll('[data-home-slide]');
   slides.forEach((slide, i) => { slide.classList.toggle('current', i === carouselIndex); slide.setAttribute('aria-hidden', String(i !== carouselIndex)); });
@@ -210,11 +234,12 @@ function stopHomeCarousel() {
 }
 // The slides bleed to the viewport edges behind the brand and copy, then fade into the page background.
 function homeHero() {
-  return `<div class="home-hero" id="home-hero"><div class="home-slides">${homeSlides.map((slide, index) => `<div class="home-slide ${index === carouselIndex ? 'current' : ''}" role="img" aria-label="${slide.alt}" aria-hidden="${index !== carouselIndex}" style="--slide-image:url('${slide.image}')"></div>`).join('')}</div><header class="topbar home-topbar"><a class="brand" href="#home"><span class="brand-symbol"><img src="assets/yipai-symbol-dark.png" alt="" width="28" height="28"></span>衣拍<span class="brand-note">每一件都值得被看见</span></a></header><section class="home-hero-copy" aria-label="精选穿搭背景图轮播"><span>衣拍灵感</span><h1>把每一件单品，好好呈现</h1><p>轻松生成适合商品展示的模特图。</p><div class="home-carousel-controls">${homeSlides.map((slide, index) => `<button class="home-carousel-dot ${index === carouselIndex ? 'current' : ''}" type="button" data-home-slide="${index}" aria-label="查看第 ${index + 1} 张背景图" aria-current="${index === carouselIndex}"></button>`).join('')}</div></section></div>`;
+  return `<div class="home-hero" id="home-hero"><div class="home-slides">${homeSlides.map((slide, index) => `<div class="home-slide ${index === carouselIndex ? 'current' : ''}" role="img" aria-label="${slide.alt}" aria-hidden="${index !== carouselIndex}" style="--slide-image:url('${slide.image}')"></div>`).join('')}</div><header class="topbar home-topbar"><a class="brand" href="#home"><span class="brand-symbol"><img class="on-dark" src="assets/yipai-symbol-dark.png" alt="" width="28" height="28"><img class="on-light" src="assets/yipai-symbol-light.png" alt="" width="28" height="28"></span>衣拍<span class="brand-note">每一件都值得被看见</span></a></header><div class="home-carousel-controls" aria-label="精选穿搭背景图轮播">${homeSlides.map((slide, index) => `<button class="home-carousel-dot ${index === carouselIndex ? 'current' : ''}" type="button" data-home-slide="${index}" aria-label="查看第 ${index + 1} 张背景图" aria-current="${index === carouselIndex}"></button>`).join('')}</div></div>`;
 }
 function startHomeCarousel() {
   stopHomeCarousel();
   const root = document.querySelector('#home-hero');
+  if (typeof Image === 'function') { homeSlides.forEach(slideTone); void applySlideTone(carouselIndex); }
   root.querySelectorAll('[data-home-slide]').forEach(button => button.onclick = () => showHomeSlide(Number(button.dataset.homeSlide)));
   let touchStartX = null;
   root.addEventListener('touchstart', event => { touchStartX = event.changedTouches[0]?.clientX ?? null; }, {passive:true});
@@ -234,7 +259,7 @@ function bindHistory(root = app) {
 }
 const showsJobs = () => screen === 'home' || screen === 'my';
 function renderCreate() {
-  app.innerHTML = `<section class="page home-page">${homeHero()}<div class="home-body">${errorSlot}<div id="active-task"></div><section class="home-action-grid" aria-label="创作入口"><button id="start-create" class="home-action home-action-primary" type="button"><span class="home-action-kicker">从一张图开始</span><span class="home-action-icon">${icon('camera')}</span><span class="home-action-title">开拍</span><span class="home-action-copy">上传商品原图<br>生成模特上身效果</span><span class="home-action-link">开始创作 ${icon('arrow')}</span></button><button id="home-remake" class="home-action home-action-remake" type="button"><span class="home-action-kicker">官方穿搭灵感</span><span class="home-action-title">拍同款</span><span class="home-action-copy">从精选效果开始试拍</span><span class="home-action-link">看看示例 ${icon('arrow')}</span></button></section></div></section>`;
+  app.innerHTML = `<section class="page home-page">${homeHero()}<div class="home-body">${errorSlot}<div id="active-task"></div><section class="home-action-grid" aria-label="创作入口"><button id="start-create" class="home-action home-action-primary" type="button"><span class="home-action-icon">${icon('camera')}</span><span class="home-action-title">开拍</span><span class="home-action-copy">上传商品图<br>生成模特上身效果</span></button><button id="home-remake" class="home-action home-action-remake" type="button"><span class="home-action-title">拍同款</span><span class="home-action-copy">截图心仪的商品图<br>照着生成同款效果</span></button></section></div></section>`;
   startHomeCarousel();
   document.querySelector('#home-remake').onclick = () => postPage(examples[0]);
   viewSignature = ''; updateView();
@@ -252,7 +277,7 @@ function updateView() {
   viewSignature = signature;
   if (screen === 'home') {
     const start = document.querySelector('#start-create');
-    start.querySelector('.home-action-copy').textContent = draft ? '商品图已准备好\n继续完成模特效果' : '上传商品原图\n生成模特上身效果';
+    start.querySelector('.home-action-copy').textContent = draft ? '商品图已准备好\n继续完成模特效果' : '上传商品图\n生成模特上身效果';
     start.querySelector('.home-action-title').textContent = draft ? '继续创作' : '开拍';
     start.onclick = () => draft ? prepare() : input.click();
     const pending = sortedJobs().find(isPending);

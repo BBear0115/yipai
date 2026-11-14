@@ -4,8 +4,22 @@
     {
       "name": "yipai-preview",
       "runtimeExecutable": "python3",
-      "runtimeArgs": ["testing/preview_server.py", "--port", "8019"],
+      "runtimeArgs": [
+        "testing/preview_server.py",
+        "--port",
+        "8019"
+      ],
       "port": 8019
+    },
+    {
+      "name": "yipai-preview-alt",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "testing/preview_server.py",
+        "--port",
+        "8021"
+      ],
+      "port": 8021
     }
   ]
 }

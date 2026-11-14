@@ -97,6 +97,7 @@ test('create page keeps the immersive hero and only the two creation entries',as
   assert.match(html,/拍同款/);
   assert.doesNotMatch(html,/home-carousel"|home-mini-actions|我的作品|社区灵感/);
   assert.doesNotMatch(html,/创作历史|一件商品，换种呈现|edit-profile/);
+  assert.doesNotMatch(html,/把每一件单品|衣拍灵感|开始创作|官方穿搭灵感|看看示例/);
 });
 
 test('my page holds the profile and the creation history',async()=>{
