@@ -94,11 +94,20 @@ function studioTabs() {
   return `<div class="mode-tabs" role="group" aria-label="裂变方式">${tabs}</div>`;
 }
 
+// Empty state is a picker: camera and album stacked on the left, recent finished works scrolling on the right.
+function studioRecentWorks() {
+  return sortedJobs().filter(job => job.status === 'succeeded' && job.image).slice(0, 24);
+}
+
 function studioUploadField(mode) {
+  const works = studioRecentWorks();
+  const workList = works.length
+    ? works.map(job => `<button type="button" class="picker-work" data-studio-work="${escapeHtml(job.id)}" aria-label="使用作品：${escapeHtml(workflowJobName(job))}，${escapeHtml(job.date)}"><img src="${escapeHtml(job.image)}" alt="" loading="lazy" decoding="async"></button>`).join('')
+    : `<p class="picker-empty">${jobsLoaded ? '生成过的作品会出现在这里，可直接拿来再创作' : '正在加载作品…'}</p>`;
   const card = studioState.upload
-    ? `<div class="upload-card has-image"><div class="upload-thumb">${photo(studioState.upload, mode.uploadTitle)}</div><div class="upload-actions"><button type="button" class="secondary" data-studio-upload>换一张 ${icon('refresh')}</button><button type="button" class="secondary remove" data-studio-remove>移除 ${icon('close')}</button></div></div>`
-    : `<div class="upload-card"><button type="button" class="upload-dropzone" data-studio-upload>${icon('image')}<strong>${escapeHtml(mode.uploadTitle)}</strong><small>JPG、PNG 或 WebP，最大 20 MB</small><span class="secondary">选择图片 ${icon('plus')}</span></button></div>`;
-  return `<div class="studio-field"><div class="studio-field-label"><span>图片</span><small>${escapeHtml(mode.uploadNote)}</small></div>${card}<input id="studio-file" type="file" accept="image/jpeg,image/png,image/webp" hidden></div>`;
+    ? `<div class="upload-card has-image"><div class="upload-thumb">${photo(studioState.upload, mode.uploadTitle)}</div><div class="upload-actions"><button type="button" class="secondary" data-studio-remove>换一张 ${icon('refresh')}</button></div></div>`
+    : `<div class="upload-card picker"><div class="picker-sources"><button type="button" class="picker-source" data-studio-camera>${icon('camera')}<span>拍照</span></button><button type="button" class="picker-source" data-studio-upload>${icon('image')}<span>相册</span></button></div><div class="picker-works" role="group" aria-label="从我的作品中选择">${workList}</div></div>`;
+  return `<div class="studio-field"><div class="studio-field-label"><span>图片</span><small>${escapeHtml(mode.uploadNote)}</small></div>${card}<input id="studio-file" type="file" accept="image/jpeg,image/png,image/webp" hidden><input id="studio-camera" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" hidden></div>`;
 }
 
 function studioOptions() {
@@ -118,6 +127,8 @@ function renderVariations(routeMode) {
   bindHeader(home);
   bindStudio();
   watchImages();
+  // Works arrive with the session; refresh the picker once they do.
+  if (!jobsLoaded && !studioState.upload) sessionReady.then(() => { if (screen === 'variations' && jobsLoaded && !studioState.upload) renderVariations(studioState.mode); });
 }
 
 function bindStudio() {
@@ -133,17 +144,19 @@ function bindStudio() {
 
 function studioClick(event) {
   if (screen !== 'variations') return;
-  const target = event.target.closest('[data-studio-mode],[data-studio-upload],[data-studio-remove],[data-studio-count],[data-studio-scene]');
+  const target = event.target.closest('[data-studio-mode],[data-studio-upload],[data-studio-camera],[data-studio-work],[data-studio-remove],[data-studio-count],[data-studio-scene]');
   if (!target) return;
   if (target.hasAttribute('data-studio-mode')) { openStudioMode(target.dataset.studioMode); return; }
   if (target.hasAttribute('data-studio-upload')) { app.querySelector('#studio-file')?.click(); return; }
+  if (target.hasAttribute('data-studio-camera')) { app.querySelector('#studio-camera')?.click(); return; }
+  if (target.hasAttribute('data-studio-work')) { studioUseWork(target.dataset.studioWork); return; }
   if (target.hasAttribute('data-studio-remove')) { studioResetUpload(); return; }
   if (target.hasAttribute('data-studio-count')) { studioChoose('poseCount', Number(target.dataset.studioCount)); return; }
   if (target.hasAttribute('data-studio-scene')) studioChoose('scene', target.dataset.studioScene);
 }
 
 function studioChange(event) {
-  if (event.target.id !== 'studio-file') return;
+  if (event.target.id !== 'studio-file' && event.target.id !== 'studio-camera') return;
   const file = event.target.files?.[0];
   event.target.value = '';
   if (file) void studioReadFile(file);
@@ -179,6 +192,17 @@ function studioDrop(event) {
 
 function studioResetUpload() {
   studioState.upload = '';
+  studioState.pending = null;
+  studioState.error = '';
+  renderVariations(studioState.mode);
+}
+
+// A picked work stays a server URL for the preview; studioSubmit turns it into image data.
+function studioUseWork(id) {
+  const job = history.find(item => item.id === id);
+  if (!job?.image) return;
+  ++studioState.uploadVersion;
+  studioState.upload = job.image;
   studioState.pending = null;
   studioState.error = '';
   renderVariations(studioState.mode);
@@ -228,6 +252,7 @@ async function studioSubmit() {
   try {
     await sessionReady;
     const payload = studioPayload();
+    payload.image = await sourceData(payload.image);
     const data = await api('/api/jobs', {method: 'POST', body: JSON.stringify(payload)});
     studioState.submitting = false; submitting = false;
     studioState.upload = '';

@@ -268,6 +268,22 @@ test('old workbench links redirect to the matching page',async()=>{
   }
 });
 
+test('创意裂变 picker offers camera, album and finished works, and a picked work becomes the upload',async()=>{
+  const ctx=await context();
+  vm.runInContext(`
+    jobsLoaded=true;
+    history=[{id:'done',status:'succeeded',image:'/api/jobs/done/result',model:'female',date:'11/14',created:'2026-11-14T00:00:00Z'},{id:'running',status:'running',model:'female',date:'11/14',created:'2026-11-14T01:00:00Z'}];
+    screen='variations';studioState.upload='';renderVariations('pose');
+  `,ctx);
+  const html=vm.runInContext('app.innerHTML',ctx);
+  assert.match(html,/data-studio-camera/);
+  assert.match(html,/data-studio-upload/);
+  assert.match(html,/capture="environment"/);
+  assert.deepEqual(Array.from(vm.runInContext('[...app.innerHTML.matchAll(/data-studio-work="(\\w+)"/g)].map(match=>match[1])',ctx)),['done']);
+  vm.runInContext("studioUseWork('done')",ctx);
+  assert.equal(vm.runInContext('studioState.upload',ctx),'/api/jobs/done/result');
+});
+
 test('创意裂变 submission sends typed config with an idempotency key and opens its returned job',async()=>{
   const ctx=await context();
   vm.runInContext(`
