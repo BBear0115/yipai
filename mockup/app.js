@@ -26,8 +26,9 @@ let model = 'female', nickname = '衣拍访客';
 try { model = localStorage.getItem('yipai-model') === 'male' ? 'male' : 'female'; nickname = localStorage.getItem('yipai-nickname') || nickname; } catch {}
 let history = [], posts = [], draft = null, active = null, screen = 'home';
 let busy = false, submitting = false, toastTimer, pollTimer, pendingSubmission = null;
-let currentRoute = '', routeVersion = 0, homeSignature = '', pollError = '';
+let currentRoute = '', routeVersion = 0, viewSignature = '', pollError = '';
 let sessionReady, sessionError = '', jobsLoaded = false;
+let carouselIndex = 0, carouselTimer;
 const scrollPositions = new Map();
 const publishDrafts = new Map();
 
@@ -78,17 +79,20 @@ function navigate(route, replace = false) {
   void renderRoute();
 }
 function home() { navigate('#home'); }
-function historyPage() { home(); void refreshHome(); }
+function myPage() { navigate('#my'); }
+function historyPage() { myPage(); void refreshJobs(); }
 function communityPage() { navigate('#community'); }
 function prepare() { if (draft) navigate('#prepare'); else home(); }
 function resultPage(job) { active = mergeJob(job); navigate(`#job/${job.id}`); }
 function postPage(post) { if (post) navigate(`#post/${post.id}`); }
 function publishPage(job) { active = job; navigate(`#publish/${job.id}`); }
 function openJob(job) { active = mergeJob(job); navigate(`#job/${job.id}`); }
+function recreatePost(post) { if (!post?.productImage) return; draft = post.productImage; prepare(); toast('示例商品图已载入，选好模特即可开始创作'); }
 function setScreen(value, showDock = false) {
   screen = value; dock.classList.toggle('contextual', !showDock);
+  if (value !== 'home') stopHomeCarousel();
   app.classList.toggle('with-dock', showDock);
-  for (const [id, valueForTab] of [['my-tab', 'home'], ['community-tab', 'community']]) {
+  for (const [id, valueForTab] of [['create-tab', 'home'], ['community-tab', 'community'], ['my-tab', 'my']]) {
     const tab = document.getElementById(id);
     tab.classList.toggle('active', value === valueForTab);
     if (value === valueForTab) tab.setAttribute('aria-current', 'page'); else tab.removeAttribute('aria-current');
@@ -103,7 +107,8 @@ async function renderRoute() {
   currentRoute = route;
   const parts = route.slice(1).split('/');
   const restore = () => window.scrollTo(0, scrollPositions.get(route) || 0);
-  if (parts[0] === 'home') { setScreen('home', true); renderMy(); restore(); return; }
+  if (parts[0] === 'home') { setScreen('home', true); renderCreate(); restore(); return; }
+  if (parts[0] === 'my') { setScreen('my', true); renderMy(); restore(); return; }
   if (parts[0] === 'prepare') {
     if (!draft) { navigate('#home', true); toast('请重新选择商品图'); return; }
     renderPrepare(); restore(); return;
@@ -119,9 +124,9 @@ async function renderRoute() {
     let job = history.find(item => item.id === parts[1]);
     if (!job) {
       setScreen('loading');
-      app.innerHTML = `<section class="page">${subTop('正在加载', home)}<div class="loading-page"><div class="spinner"></div><p>正在找回作品</p></div></section>`;
+      app.innerHTML = `<section class="page">${subTop('正在加载', myPage)}<div class="loading-page"><div class="spinner"></div><p>正在找回作品</p></div></section>`;
       try { await sessionReady; job = mergeJob((await api(`/api/jobs/${parts[1]}`)).job); }
-      catch (error) { if (version === routeVersion) renderUnavailable(error.message, '#home'); return; }
+      catch (error) { if (version === routeVersion) renderUnavailable(error.message, '#my'); return; }
     }
     if (version !== routeVersion) return;
     active = job;
@@ -187,8 +192,39 @@ function watchImages(root = app) {
   });
   observeActions();
 }
-function examplePreview() {
-  return `<section class="example-preview"><div class="section-heading"><h2>一件商品，换种呈现</h2><span class="tag">效果示例</span></div><div class="example-pair" id="view-example" role="button" tabindex="0" aria-label="查看连衣裙原图与模特效果示例"><span>${photo(examples[0].productImage, '连衣裙商品原图')}<small>商品原图</small></span><span class="pair-arrow">${icon('arrow')}</span><span>${photo(examples[0].image, '连衣裙模特效果示例')}<small>模特效果</small></span></div></section>`;
+const homeSlides = [
+  {image:examples[0].image, alt:'模特身穿碎花连衣裙的效果示例'},
+  {image:examples[1].image, alt:'模特身穿蓝白条纹上衣的效果示例'},
+  {image:'assets/sample-generated.jpg', alt:'模特身穿蓝色短袖上衣的效果示例'}
+];
+function showHomeSlide(index) {
+  carouselIndex = (index + homeSlides.length) % homeSlides.length;
+  const slides = document.querySelectorAll('.home-slide');
+  const dots = document.querySelectorAll('[data-home-slide]');
+  slides.forEach((slide, i) => { slide.classList.toggle('current', i === carouselIndex); slide.setAttribute('aria-hidden', String(i !== carouselIndex)); });
+  dots.forEach((dot, i) => { dot.classList.toggle('current', i === carouselIndex); dot.setAttribute('aria-current', i === carouselIndex ? 'true' : 'false'); });
+}
+function stopHomeCarousel() {
+  if (carouselTimer && typeof clearInterval === 'function') clearInterval(carouselTimer);
+  carouselTimer = null;
+}
+// The slides bleed to the viewport edges behind the brand and copy, then fade into the page background.
+function homeHero() {
+  return `<div class="home-hero" id="home-hero"><div class="home-slides">${homeSlides.map((slide, index) => `<div class="home-slide ${index === carouselIndex ? 'current' : ''}" role="img" aria-label="${slide.alt}" aria-hidden="${index !== carouselIndex}" style="--slide-image:url('${slide.image}')"></div>`).join('')}</div><header class="topbar home-topbar"><a class="brand" href="#home"><span class="brand-symbol"><img src="assets/yipai-symbol-dark.png" alt="" width="28" height="28"></span>衣拍<span class="brand-note">每一件都值得被看见</span></a></header><section class="home-hero-copy" aria-label="精选穿搭背景图轮播"><span>衣拍灵感</span><h1>把每一件单品，好好呈现</h1><p>轻松生成适合商品展示的模特图。</p><div class="home-carousel-controls">${homeSlides.map((slide, index) => `<button class="home-carousel-dot ${index === carouselIndex ? 'current' : ''}" type="button" data-home-slide="${index}" aria-label="查看第 ${index + 1} 张背景图" aria-current="${index === carouselIndex}"></button>`).join('')}</div></section></div>`;
+}
+function startHomeCarousel() {
+  stopHomeCarousel();
+  const root = document.querySelector('#home-hero');
+  root.querySelectorAll('[data-home-slide]').forEach(button => button.onclick = () => showHomeSlide(Number(button.dataset.homeSlide)));
+  let touchStartX = null;
+  root.addEventListener('touchstart', event => { touchStartX = event.changedTouches[0]?.clientX ?? null; }, {passive:true});
+  root.addEventListener('touchend', event => {
+    const endX = event.changedTouches[0]?.clientX;
+    if (touchStartX === null || endX === undefined) return;
+    const distance = endX - touchStartX; touchStartX = null;
+    if (Math.abs(distance) > 48) showHomeSlide(carouselIndex + (distance < 0 ? 1 : -1));
+  }, {passive:true});
+  if (typeof matchMedia === 'function' && !matchMedia('(prefers-reduced-motion: reduce)').matches) carouselTimer = setInterval(() => showHomeSlide(carouselIndex + 1), 6000);
 }
 function historyCard(job) {
   return `<article class="history-card" data-job-card="${job.id}"><div class="history-open" role="button" tabindex="0" data-job="${job.id}" aria-label="查看${modelName(job.model)}作品，${statusLabel(job)}"><span class="history-photo">${photo(job.image || job.original, '商品创作图片', '', true)}${isPending(job) || job.status === 'failed' ? `<span class="status-badge ${job.status}">${isPending(job) ? '<span class="status-dot"></span>' : ''}${statusLabel(job)}</span>` : ''}</span><span class="card-copy"><strong>${modelName(job.model)}作品</strong><time>${escapeHtml(job.date)}</time></span></div></article>`;
@@ -196,36 +232,43 @@ function historyCard(job) {
 function bindHistory(root = app) {
   root.querySelectorAll('[data-job]').forEach(el => el.onclick = () => { const job = history.find(item => item.id === el.dataset.job); if (job) openJob(job); });
 }
-function renderMy() {
-  app.innerHTML = `<section class="page workspace"><header class="topbar"><a class="brand" href="#home"><span class="brand-symbol">${icon('camera')}</span>衣拍<span class="brand-note">商品的另一面</span></a><button class="profile-edit" id="edit-profile" aria-label="编辑昵称">${icon('user')}<span>${escapeHtml(nickname)}</span></button></header><div class="home-intro"><div><span class="eyebrow">你的随身商品摄影棚</span><h1>好商品，<br class="mobile-break">值得一张好照片。</h1><p>上传商品图，让模特替你展示。</p></div><div class="start-card" id="start-card"></div></div>${errorSlot}<div id="active-task"></div><div class="workspace-content"><section class="history-section"><div class="section-heading"><h2>创作历史 <span class="count" id="history-count"></span></h2><div class="heading-actions"><button class="text-button" id="show-example">查看效果示例 ${icon('arrow')}</button><button class="icon-button" id="refresh-history" aria-label="刷新创作历史">${icon('refresh')}</button></div></div><div id="history-content"></div></section><div id="example-content"></div></div></section>`;
-  document.querySelector('#edit-profile').onclick = editProfile;
-  document.querySelector('#refresh-history').onclick = refreshHome;
-  document.querySelector('#show-example').onclick = () => postPage(examples[0]);
-  homeSignature = ''; updateHome(); watchImages();
+const showsJobs = () => screen === 'home' || screen === 'my';
+function renderCreate() {
+  app.innerHTML = `<section class="page home-page">${homeHero()}<div class="home-body">${errorSlot}<div id="active-task"></div><section class="home-action-grid" aria-label="创作入口"><button id="start-create" class="home-action home-action-primary" type="button"><span class="home-action-kicker">从一张图开始</span><span class="home-action-icon">${icon('camera')}</span><span class="home-action-title">开拍</span><span class="home-action-copy">上传商品原图<br>生成模特上身效果</span><span class="home-action-link">开始创作 ${icon('arrow')}</span></button><button id="home-remake" class="home-action home-action-remake" type="button"><span class="home-action-kicker">官方穿搭灵感</span><span class="home-action-title">拍同款</span><span class="home-action-copy">从精选效果开始试拍</span><span class="home-action-link">看看示例 ${icon('arrow')}</span></button></section></div></section>`;
+  startHomeCarousel();
+  document.querySelector('#home-remake').onclick = () => postPage(examples[0]);
+  viewSignature = ''; updateView();
 }
-function updateHome() {
-  if (screen !== 'home') return;
-  const signature = JSON.stringify([draft, nickname, history, jobsLoaded, sessionError]);
-  if (signature === homeSignature) return;
-  homeSignature = signature;
-  const start = document.querySelector('#start-card');
-  start.innerHTML = `<div class="start-icon">${icon('camera')}</div><div><strong>${draft ? '这件商品，继续开拍' : '从一张商品图开始'}</strong><p>${draft ? '已保留当前商品与模特选择' : '平铺图、挂拍图都可以试试'}</p></div><button class="primary" id="start-create">${draft ? '继续创作' : '上传商品图'} ${icon('plus')}</button>${draft ? '<button class="text-button" id="change-product">换商品</button>' : '<span class="start-hint">上传 → 生成 → 保存</span>'}`;
-  document.querySelector('#start-create').onclick = () => draft ? prepare() : input.click();
-  document.querySelector('#change-product')?.addEventListener('click', () => input.click());
-  const pending = sortedJobs().find(isPending);
-  document.querySelector('#active-task').innerHTML = pending ? `<button class="task-banner" data-job="${pending.id}"><span class="spinner small"></span><span><strong>${statusLabel(pending)}</strong><small>你的${modelName(pending.model)}作品正在创作，点此查看</small></span>${icon('arrow')}</button>` : '';
-  document.querySelector('#history-count').textContent = jobsLoaded ? history.length : '';
-  updateHistoryCards();
-  document.querySelector('#show-example').hidden = !history.length;
-  document.querySelector('#example-content').innerHTML = history.length ? '' : examplePreview();
-  pageError(sessionError, app, refreshHome); bindHistory();
-  document.querySelector('#view-example')?.addEventListener('click', () => postPage(examples[0]));
+function renderMy() {
+  app.innerHTML = `<section class="page my-page"><header class="topbar"><div><span class="eyebrow">个人创作空间</span><h1 class="page-title">我的</h1></div></header><button class="my-profile" id="edit-profile" type="button" aria-label="编辑昵称，当前为${escapeHtml(nickname)}"><span class="small-avatar my-avatar">${escapeHtml(nickname.slice(0, 1))}</span><span class="my-profile-copy"><strong>${escapeHtml(nickname)}</strong><small>编辑昵称</small></span>${icon('arrow')}</button>${errorSlot}<section class="history-section" id="history-section"><div class="section-heading"><h2>创作历史 <span class="count" id="history-count"></span></h2><button class="icon-button" id="refresh-history" aria-label="刷新创作历史">${icon('refresh')}</button></div><div id="history-content"></div></section></section>`;
+  document.querySelector('#edit-profile').onclick = editProfile;
+  document.querySelector('#refresh-history').onclick = refreshJobs;
+  viewSignature = ''; updateView();
+}
+function updateView() {
+  if (!showsJobs()) return;
+  const signature = JSON.stringify([screen, draft, nickname, history, jobsLoaded, sessionError]);
+  if (signature === viewSignature) return;
+  viewSignature = signature;
+  if (screen === 'home') {
+    const start = document.querySelector('#start-create');
+    start.querySelector('.home-action-copy').textContent = draft ? '商品图已准备好\n继续完成模特效果' : '上传商品原图\n生成模特上身效果';
+    start.querySelector('.home-action-title').textContent = draft ? '继续创作' : '开拍';
+    start.onclick = () => draft ? prepare() : input.click();
+    const pending = sortedJobs().find(isPending);
+    document.querySelector('#active-task').innerHTML = pending ? `<button class="task-banner" data-job="${pending.id}"><span class="task-banner-icon"><span class="spinner small"></span></span><span class="task-banner-copy"><strong>${statusLabel(pending)}</strong><small>你的${modelName(pending.model)}作品正在创作，点此查看</small><span class="task-progress" aria-hidden="true"><span></span></span></span>${icon('arrow')}</button>` : '';
+  } else {
+    document.querySelector('#history-count').textContent = jobsLoaded ? history.length : '';
+    updateHistoryCards();
+  }
+  pageError(sessionError, app, refreshJobs); bindHistory();
   watchImages();
 }
 function updateHistoryCards() {
   const container = document.querySelector('#history-content');
   if (!history.length) {
-    container.innerHTML = `<div class="empty-history">${jobsLoaded ? '你的第一张模特图，从上方上传开始。' : '正在加载创作历史…'}</div>`;
+    container.innerHTML = jobsLoaded ? `<div class="empty-history"><p>还没有作品，上传一张商品图就能开始。</p><button class="text-button" id="empty-create" type="button">去创作 ${icon('arrow')}</button></div>` : '<div class="empty-history">正在加载创作历史…</div>';
+    container.querySelector('#empty-create')?.addEventListener('click', home);
     return;
   }
   if (!container.querySelector('.history-grid')) container.innerHTML = '<div class="history-grid"></div>';
@@ -244,9 +287,9 @@ function updateHistoryCards() {
   });
   known.forEach(card => card.remove());
 }
-async function refreshHome() {
-  try { await syncJobs(); sessionError = ''; updateHome(); if (busy) schedulePoll(); }
-  catch (error) { sessionError = error.message; if (screen === 'home') pageError(error.message, app, refreshHome); }
+async function refreshJobs() {
+  try { await syncJobs(); sessionError = ''; updateView(); if (busy) schedulePoll(); }
+  catch (error) { sessionError = error.message; if (showsJobs()) pageError(error.message, app, refreshJobs); }
 }
 function editProfile() {
   const layer = openOverlay(`<section class="sheet" role="dialog" aria-modal="true" aria-labelledby="nickname-title"><div class="sheet-heading"><h2 id="nickname-title">编辑昵称</h2><button class="icon-button" data-close aria-label="关闭">${icon('close')}</button></div><form id="nickname-form"><label class="field-label" for="nickname-input">昵称</label><input id="nickname-input" class="field-input" maxlength="20" required value="${escapeHtml(nickname)}">${errorSlot}<div class="sheet-actions"><button class="secondary" type="button" data-close>取消</button><button class="primary" type="submit">保存</button></div></form></section>`);
@@ -280,7 +323,7 @@ function renderPrepare() {
 function waiting() {
   setScreen('generating');
   const job = active;
-  app.innerHTML = `<section class="page detail-page">${subTop('正在创作')}<div class="state-panel generation-panel">${job?.original || draft ? photo(job?.original || draft, '正在创作的商品', 'task-product') : ''}<div class="status-line"><span class="spinner small"></span><span class="eyebrow">${modelName(job?.model || model)}</span></div><h1 id="task-status">${job ? statusLabel(job) : '正在提交'}</h1><p>可以离开，完成后在我的查看。</p>${errorSlot}<button class="primary" id="leave">返回工作台 ${icon('arrow')}</button></div></section>`;
+  app.innerHTML = `<section class="page detail-page">${subTop('正在创作')}<div class="state-panel generation-panel">${job?.original || draft ? photo(job?.original || draft, '正在创作的商品', 'task-product') : ''}<div class="status-line"><span class="spinner small"></span><span class="eyebrow">${modelName(job?.model || model)}</span></div><h1 id="task-status">${job ? statusLabel(job) : '正在提交'}</h1><p>可以离开，完成后在「我的」查看。</p>${errorSlot}<button class="primary" id="leave">返回创作 ${icon('arrow')}</button></div></section>`;
   bindHeader(); document.querySelector('#leave').onclick = home; watchImages();
   if (pollError) pageError(pollError, app, () => void pollJobs());
 }
@@ -295,7 +338,7 @@ async function pollJobs() {
   const previous = new Map(history.map(job => [job.id, job.status]));
   try {
     await syncJobs(); pollError = '';
-    if (screen === 'home' && !sessionError) pageError('');
+    if (showsJobs() && !sessionError) pageError('');
     // A routed task can be older than the latest 100 jobs returned by the list endpoint.
     if (active && !history.some(job => job.id === active.id) && screen === 'generating') active = mergeJob((await api(`/api/jobs/${active.id}`)).job);
     else if (active) active = history.find(job => job.id === active.id) || active;
@@ -303,12 +346,12 @@ async function pollJobs() {
       if (!isPending(active)) renderJob(active);
       else { const title = document.querySelector('#task-status'); if (title) title.textContent = statusLabel(active); pageError(''); }
     }
-    updateHome();
-    if (screen !== 'result' && history.some(job => job.status === 'succeeded' && ['running','queued'].includes(previous.get(job.id)))) toast('图片已生成，可在创作历史查看');
+    updateView();
+    if (screen !== 'result' && history.some(job => job.status === 'succeeded' && ['running','queued'].includes(previous.get(job.id)))) toast('图片已生成，可在「我的」查看');
   } catch (error) {
     pollError = '暂时连不上，任务可能仍在进行。';
     if (screen === 'generating') pageError(pollError, app, () => void pollJobs());
-    else if (screen === 'home') pageError(pollError, app, refreshHome);
+    else if (showsJobs()) pageError(pollError, app, refreshJobs);
   }
   if (busy) schedulePoll();
 }
@@ -341,7 +384,7 @@ async function generate(source = draft, choice = model) {
     if (draft === source) draft = null;
     submitting = false; busy = history.some(isPending);
     if (currentRoute === submissionRoute) { active = submittedJob; navigate(`#job/${submittedJob.id}`); }
-    else { updateHome(); toast('任务已提交，可在创作历史查看'); }
+    else { updateView(); toast('任务已提交，可在「我的」查看'); }
     schedulePoll();
   } catch (error) {
     submitting = false; busy = history.some(isPending);
@@ -350,20 +393,20 @@ async function generate(source = draft, choice = model) {
     if (screen === 'prepare') renderPrepare();
     else if (screen === 'result' && active) renderResult(active);
     else if (screen === 'failed' && active) failedPage(active);
-    else { updateHome(); }
+    else { updateView(); }
     pageError(error.message || '生成失败，请重试');
   }
 }
 function failedPage(job) {
   active = job; setScreen('failed');
-  app.innerHTML = `<section class="page detail-page">${subTop('未生成成功')}<div class="state-panel">${photo(job.original, '生成失败的商品', 'task-product')}<span class="failure-icon">${icon('warning')}</span><h1>这次没生成成功</h1><p>${escapeHtml(job.error || '请稍后重试，商品原图已保留。')}</p>${errorSlot}<button class="primary" id="retry">重新生成 ${icon('refresh')}</button><button class="text-button" id="return-home">返回工作台</button></div></section>`;
-  bindHeader(); document.querySelector('#return-home').onclick = home;
+  app.innerHTML = `<section class="page detail-page">${subTop('未生成成功', myPage)}<div class="state-panel">${photo(job.original, '生成失败的商品', 'task-product')}<span class="failure-icon">${icon('warning')}</span><h1>这次没生成成功</h1><p>${escapeHtml(job.error || '请稍后重试，商品原图已保留。')}</p>${errorSlot}<button class="primary" id="retry">重新生成 ${icon('refresh')}</button><button class="text-button" id="return-home">返回我的作品</button></div></section>`;
+  bindHeader(myPage); document.querySelector('#return-home').onclick = myPage;
   document.querySelector('#retry').onclick = () => { void generate(job.original, job.model); }; watchImages();
 }
 function renderResult(job) {
   setScreen('result');
-  app.innerHTML = `<section class="page detail-page result-page">${subTop('你的新作品', home, true)}<div class="result-layout"><div class="result-main"><div class="result-toolbar"><div class="segmented" aria-label="图片对照"><button class="selected" id="effect-tab" aria-pressed="true">效果图</button><button id="original-tab" aria-pressed="false">商品原图</button></div><button class="icon-button" id="zoom-result" aria-label="放大查看图片">${icon('zoom')}</button></div><div class="comparison-grid"><div class="result-image-column"><span class="desktop-image-label">模特效果</span><div id="result-primary" role="button" tabindex="0" aria-label="全屏查看效果图">${photo(job.image, '带衣拍水印的模特展示图', 'result-art')}</div></div><div class="desktop-original"><span class="desktop-image-label">商品原图</span><div role="button" tabindex="0" id="result-original" aria-label="全屏查看商品原图">${photo(job.original, '商品原图', 'result-art')}</div></div></div></div><aside class="result-side"><div class="result-summary"><span class="eyebrow">完成这一次创作</span><h2>让细节，也经得起看。</h2><p>发布前，对照原图检查颜色、图案和商品结构。</p><span class="result-meta">${modelName(job.model)} · ${escapeHtml(job.date)}</span></div>${errorSlot}<div class="result-actions"><button class="action-button" id="regenerate">${icon('refresh')}<span>重新生成</span></button><button class="action-button primary-action" id="save">${icon('save')}<span>保存图片</span></button><button class="action-button" id="share">${icon('share')}<span>分享转发</span></button></div></aside></div></section>`;
-  bindHeader(); let showingOriginal = false;
+  app.innerHTML = `<section class="page detail-page result-page">${subTop('你的新作品', myPage, true)}<div class="result-layout"><div class="result-main"><div class="result-toolbar"><div class="segmented" aria-label="图片对照"><button class="selected" id="effect-tab" aria-pressed="true">效果图</button><button id="original-tab" aria-pressed="false">商品原图</button></div><button class="icon-button" id="zoom-result" aria-label="放大查看图片">${icon('zoom')}</button></div><div class="comparison-grid"><div class="result-image-column"><span class="desktop-image-label">模特效果</span><div id="result-primary" role="button" tabindex="0" aria-label="全屏查看效果图">${photo(job.image, '带衣拍水印的模特展示图', 'result-art')}</div></div><div class="desktop-original"><span class="desktop-image-label">商品原图</span><div role="button" tabindex="0" id="result-original" aria-label="全屏查看商品原图">${photo(job.original, '商品原图', 'result-art')}</div></div></div></div><aside class="result-side"><div class="result-summary"><span class="eyebrow">完成这一次创作</span><h2>让细节，也经得起看。</h2><p>发布前，对照原图检查颜色、图案和商品结构。</p><span class="result-meta">${modelName(job.model)} · ${escapeHtml(job.date)}</span></div>${errorSlot}<div class="result-actions"><button class="action-button" id="regenerate">${icon('refresh')}<span>重新生成</span></button><button class="action-button primary-action" id="save">${icon('save')}<span>保存图片</span></button><button class="action-button" id="share">${icon('share')}<span>分享转发</span></button></div></aside></div></section>`;
+  bindHeader(myPage); let showingOriginal = false;
   const choose = original => {
     showingOriginal = original;
     document.querySelector('#effect-tab').classList.toggle('selected', !original);
@@ -461,7 +504,7 @@ function openViewer(item, original = false) {
 }
 function confirmDelete(job) {
   sheet('删除这张作品？', '删除后无法在创作历史找回。已发布内容需在社区单独撤回。', [{label:'保留'}, {label:'确认删除', danger:true, action:async () => {
-    await api(`/api/jobs/${job.id}`, {method:'DELETE'}); history = history.filter(item => item.id !== job.id); active = null; home(); toast('作品已删除');
+    await api(`/api/jobs/${job.id}`, {method:'DELETE'}); history = history.filter(item => item.id !== job.id); active = null; myPage(); toast('作品已删除');
   }}]);
 }
 
@@ -481,7 +524,7 @@ input.onchange = async () => {
     draft = canvas.toDataURL('image/jpeg', .85); pendingSubmission = null; prepare();
   } catch { if (version === uploadVersion) pageError('无法读取图片或尺寸不足，请换一张清楚的 JPG、PNG 或 WebP 图片'); }
 };
-document.querySelector('#camera-tab').onclick = () => input.click();
+document.querySelector('#create-tab').onclick = home;
 document.querySelector('#my-tab').onclick = historyPage;
 document.querySelector('#community-tab').onclick = communityPage;
 document.addEventListener('keydown', event => {
@@ -489,7 +532,7 @@ document.addEventListener('keydown', event => {
 });
 window.addEventListener('popstate', () => void renderRoute());
 window.addEventListener('hashchange', () => { if (location.hash !== currentRoute) void renderRoute(); });
-window.addEventListener('online', () => { if (busy) void pollJobs(); else if (screen === 'home') void refreshHome(); });
+window.addEventListener('online', () => { if (busy) void pollJobs(); else if (showsJobs()) void refreshJobs(); });
 window.addEventListener('resize', () => {
   if (window.innerWidth >= 768 && screen === 'result' && document.querySelector('#original-tab')?.getAttribute('aria-pressed') === 'true') document.querySelector('#effect-tab').click();
 });
@@ -498,4 +541,4 @@ sessionReady = (async () => {
   catch (error) { sessionError = error.message; }
 })();
 void renderRoute();
-void sessionReady.then(() => { updateHome(); if (busy) schedulePoll(); });
+void sessionReady.then(() => { updateView(); if (busy) schedulePoll(); });

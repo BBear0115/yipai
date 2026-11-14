@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "yipai-preview",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["testing/preview_server.py", "--port", "8019"],
+      "port": 8019
+    }
+  ]
+}

@@ -87,15 +87,42 @@ test('navigation writes task routes to the URL hash',async()=>{
   assert.equal(vm.runInContext('location.hash',ctx),'#job/0123456789abcdef0123456789abcdef');
 });
 
-test('home workbench foregrounds upload and keeps example content clearly marked',async()=>{
+test('create page keeps the immersive hero and only the two creation entries',async()=>{
   const ctx=await context();
-  vm.runInContext('jobsLoaded=true;renderMy()',ctx);
+  vm.runInContext("jobsLoaded=true;screen='home';renderCreate()",ctx);
   const html=vm.runInContext('app.innerHTML',ctx);
   assert.match(html,/衣拍/);
-  assert.match(html,/start-card/);
+  assert.match(html,/home-hero/);
+  assert.match(html,/home-action-primary/);
+  assert.match(html,/拍同款/);
+  assert.doesNotMatch(html,/home-carousel"|home-mini-actions|我的作品|社区灵感/);
+  assert.doesNotMatch(html,/创作历史|一件商品，换种呈现|edit-profile/);
+});
+
+test('my page holds the profile and the creation history',async()=>{
+  const ctx=await context();
+  vm.runInContext("jobsLoaded=true;screen='my';renderMy()",ctx);
+  const html=vm.runInContext('app.innerHTML',ctx);
   assert.match(html,/创作历史/);
-  assert.match(html,/效果示例/);
-  assert.doesNotMatch(html,/my-stats|profile-card/);
+  assert.match(html,/edit-profile/);
+  assert.doesNotMatch(html,/home-hero|效果示例/);
+});
+
+test('dock routes 创作 to the create page and 我的 to its own page',async()=>{
+  const ctx=await context();
+  vm.runInContext("location.hash='#my'",ctx);
+  await vm.runInContext('renderRoute()',ctx);
+  assert.equal(vm.runInContext('screen',ctx),'my');
+  vm.runInContext("location.hash='#home'",ctx);
+  await vm.runInContext('renderRoute()',ctx);
+  assert.equal(vm.runInContext('screen',ctx),'home');
+});
+
+test('recreating an official example loads its product photo into the existing prepare flow',async()=>{
+  const ctx=await context();
+  vm.runInContext("prepared=false;prepare=()=>{prepared=true};toast=()=>{};recreatePost({productImage:'assets/community/floral-dress-product.jpg'})",ctx);
+  assert.equal(vm.runInContext('draft',ctx),'assets/community/floral-dress-product.jpg');
+  assert.equal(vm.runInContext('prepared',ctx),true);
 });
 
 test('refreshing a task route reads the existing task and never posts generation',async()=>{
