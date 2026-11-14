@@ -16,6 +16,7 @@ const icons = {
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-6 16-6 16 0"/>',
   check: '<path d="m5 12 4 4L19 6"/>',
   image: '<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1"/><path d="m3 17 6-6 4 4 3-3 5 5"/>',
+  sparkle: '<path d="m12 3 1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3Z"/><path d="m19 16 .9 2.1L22 19l-2.1.9L19 22l-.9-2.1L16 19l2.1-.9L19 16Z"/>',
   warning: '<path d="m12 3 10 18H2zM12 9v5m0 3v1"/>'
 };
 const icon = name => `<svg viewBox="0 0 24 24" aria-hidden="true">${icons[name] || ''}</svg>`;
@@ -223,10 +224,7 @@ async function applySlideTone(index) {
 function showHomeSlide(index) {
   carouselIndex = (index + homeSlides.length) % homeSlides.length;
   void applySlideTone(carouselIndex);
-  const slides = document.querySelectorAll('.home-slide');
-  const dots = document.querySelectorAll('[data-home-slide]');
-  slides.forEach((slide, i) => { slide.classList.toggle('current', i === carouselIndex); slide.setAttribute('aria-hidden', String(i !== carouselIndex)); });
-  dots.forEach((dot, i) => { dot.classList.toggle('current', i === carouselIndex); dot.setAttribute('aria-current', i === carouselIndex ? 'true' : 'false'); });
+  document.querySelectorAll('.home-slide').forEach((slide, i) => { slide.classList.toggle('current', i === carouselIndex); slide.setAttribute('aria-hidden', String(i !== carouselIndex)); });
 }
 function stopHomeCarousel() {
   if (carouselTimer && typeof clearInterval === 'function') clearInterval(carouselTimer);
@@ -234,13 +232,12 @@ function stopHomeCarousel() {
 }
 // The slides bleed to the viewport edges behind the brand and copy, then fade into the page background.
 function homeHero() {
-  return `<div class="home-hero" id="home-hero"><div class="home-slides">${homeSlides.map((slide, index) => `<div class="home-slide ${index === carouselIndex ? 'current' : ''}" role="img" aria-label="${slide.alt}" aria-hidden="${index !== carouselIndex}" style="--slide-image:url('${slide.image}')"></div>`).join('')}</div><header class="topbar home-topbar"><a class="brand" href="#home"><span class="brand-symbol"><img class="on-dark" src="assets/yipai-symbol-dark.png" alt="" width="28" height="28"><img class="on-light" src="assets/yipai-symbol-light.png" alt="" width="28" height="28"></span>衣拍<span class="brand-note">每一件都值得被看见</span></a></header><div class="home-carousel-controls" aria-label="精选穿搭背景图轮播">${homeSlides.map((slide, index) => `<button class="home-carousel-dot ${index === carouselIndex ? 'current' : ''}" type="button" data-home-slide="${index}" aria-label="查看第 ${index + 1} 张背景图" aria-current="${index === carouselIndex}"></button>`).join('')}</div></div>`;
+  return `<div class="home-hero" id="home-hero"><div class="home-slides">${homeSlides.map((slide, index) => `<div class="home-slide ${index === carouselIndex ? 'current' : ''}" role="img" aria-label="${slide.alt}" aria-hidden="${index !== carouselIndex}" style="--slide-image:url('${slide.image}')"></div>`).join('')}</div><header class="topbar home-topbar"><a class="brand" href="#home"><span class="brand-symbol"><img class="on-dark" src="assets/yipai-symbol-dark.png" alt="" width="28" height="28"><img class="on-light" src="assets/yipai-symbol-light.png" alt="" width="28" height="28"></span>衣拍<span class="brand-note">每一件都值得被看见</span></a></header><p class="home-slogan">一张商品图，<br>拍出整季大片</p></div>`;
 }
 function startHomeCarousel() {
   stopHomeCarousel();
   const root = document.querySelector('#home-hero');
   if (typeof Image === 'function') { homeSlides.forEach(slideTone); void applySlideTone(carouselIndex); }
-  root.querySelectorAll('[data-home-slide]').forEach(button => button.onclick = () => showHomeSlide(Number(button.dataset.homeSlide)));
   let touchStartX = null;
   root.addEventListener('touchstart', event => { touchStartX = event.changedTouches[0]?.clientX ?? null; }, {passive:true});
   root.addEventListener('touchend', event => {
@@ -259,9 +256,10 @@ function bindHistory(root = app) {
 }
 const showsJobs = () => screen === 'home' || screen === 'my';
 function renderCreate() {
-  app.innerHTML = `<section class="page home-page">${homeHero()}<div class="home-body">${errorSlot}<div id="active-task"></div><section class="home-action-grid" aria-label="创作入口"><button id="start-create" class="home-action home-action-primary" type="button"><span class="home-action-icon">${icon('camera')}</span><span class="home-action-title">开拍</span><span class="home-action-copy">上传商品图<br>生成模特上身效果</span></button><button id="home-remake" class="home-action home-action-remake" type="button"><span class="home-action-title">拍同款</span><span class="home-action-copy">截图心仪的商品图<br>照着生成同款效果</span></button></section></div></section>`;
+  app.innerHTML = `<section class="page home-page">${homeHero()}<div class="home-body">${errorSlot}<div id="active-task"></div><section class="home-action-grid" aria-label="创作入口"><button id="start-create" class="home-action home-action-primary" type="button"><span class="home-action-icon">${icon('camera')}</span><span class="home-action-title">开拍</span><span class="home-action-copy">上传商品图<br>生成模特上身效果</span></button><button id="home-remake" class="home-action home-action-side home-action-remake" type="button"><span class="home-action-title">拍同款</span><span class="home-action-copy">截图心仪的商品图<br>照着生成同款效果</span></button><button id="home-variations" class="home-action home-action-side home-action-variations" type="button"><span class="home-action-title">创意裂变 ${icon('sparkle')}</span><span class="home-action-copy">一张商品图<br>裂变多种场景风格</span></button></section></div></section>`;
   startHomeCarousel();
   document.querySelector('#home-remake').onclick = () => postPage(examples[0]);
+  document.querySelector('#home-variations').onclick = () => toast('创意裂变即将上线，敬请期待');
   viewSignature = ''; updateView();
 }
 function renderMy() {

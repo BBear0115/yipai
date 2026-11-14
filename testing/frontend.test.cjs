@@ -95,7 +95,9 @@ test('create page keeps the immersive hero and only the two creation entries',as
   assert.match(html,/home-hero/);
   assert.match(html,/home-action-primary/);
   assert.match(html,/拍同款/);
-  assert.doesNotMatch(html,/home-carousel"|home-mini-actions|我的作品|社区灵感/);
+  assert.match(html,/创意裂变/);
+  assert.match(html,/home-slogan/);
+  assert.doesNotMatch(html,/home-carousel|home-mini-actions|我的作品|社区灵感/);
   assert.doesNotMatch(html,/创作历史|一件商品，换种呈现|edit-profile/);
   assert.doesNotMatch(html,/把每一件单品|衣拍灵感|开始创作|官方穿搭灵感|看看示例/);
 });
