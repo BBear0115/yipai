@@ -17,6 +17,10 @@ const icons = {
   check: '<path d="m5 12 4 4L19 6"/>',
   image: '<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1"/><path d="m3 17 6-6 4 4 3-3 5 5"/>',
   sparkle: '<path d="m12 3 1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3Z"/><path d="m19 16 .9 2.1L22 19l-2.1.9L19 22l-.9-2.1L16 19l2.1-.9L19 16Z"/>',
+  thumb: '<path d="M7 10v11H4a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1zm0 0 4-7a2.5 2.5 0 0 1 2.4 3L13 9h5.6a2 2 0 0 1 2 2.4l-1.4 7.5a2.5 2.5 0 0 1-2.5 2.1H7"/>',
+  bookmark: '<path d="M6 3.5h12v17l-6-4.5-6 4.5z"/>',
+  grid: '<rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   warning: '<path d="m12 3 10 18H2zM12 9v5m0 3v1"/>'
 };
 const icon = name => `<svg viewBox="0 0 24 24" aria-hidden="true">${icons[name] || ''}</svg>`;
@@ -86,14 +90,17 @@ function historyPage() { myPage(); void refreshJobs(); }
 function communityPage() { navigate('#community'); }
 function prepare() { if (draft) navigate('#prepare'); else home(); }
 function resultPage(job) { active = mergeJob(job); navigate(`#job/${job.id}`); }
-function postPage(post) { if (post) navigate(`#post/${post.id}`); }
 function publishPage(job) { active = job; navigate(`#publish/${job.id}`); }
 function openJob(job) { active = mergeJob(job); navigate(`#job/${job.id}`); }
-function recreatePost(post) { if (!post?.productImage) return; draft = post.productImage; prepare(); toast('示例商品图已载入，选好模特即可开始创作'); }
+function recreatePost(post) { if (!post?.productImage) return; draft = post.productImage; prepare(); toast('商品图已载入，选好模特即可开始创作'); }
 function setScreen(value, showDock = false) {
   screen = value; dock.classList.toggle('contextual', !showDock);
   if (value !== 'home') stopHomeCarousel();
   app.classList.toggle('with-dock', showDock);
+  // Browsing pages (community, my) read on white; creation stays dark.
+  const light = value === 'community' || value === 'my';
+  document.documentElement?.classList.toggle('light', light);
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', light ? '#ffffff' : '#101216');
   for (const [id, valueForTab] of [['create-tab', 'home'], ['community-tab', 'community'], ['my-tab', 'my']]) {
     const tab = document.getElementById(id);
     tab.classList.toggle('active', value === valueForTab);
@@ -111,12 +118,7 @@ async function renderRoute() {
   const restore = () => window.scrollTo(0, scrollPositions.get(route) || 0);
   if (parts[0] === 'home') { setScreen('home', true); renderCreate(); restore(); return; }
   if (parts[0] === 'my') { setScreen('my', true); renderMy(); restore(); return; }
-  if (parts[0] === 'create') {
-    setScreen('studio', false);
-    if (typeof renderStudio === 'function') renderStudio(parts[1]); else renderMy();
-    restore();
-    return;
-  }
+  if (parts[0] === 'variations') { setScreen('variations'); renderVariations(parts[1]); restore(); return; }
   if (parts[0] === 'history') {
     setScreen('my', true); renderMy(); restore(); return;
   }
@@ -135,23 +137,12 @@ async function renderRoute() {
     restore();
     return;
   }
-  if (parts[0] === 'workflows') {
-    setScreen('workflows');
-    renderWorkflowsHub();
-    restore();
+  // Links into the removed workbench (#workflows, #workflow/…, #create/…) land on the matching page.
+  if (['workflows', 'workflow', 'create'].includes(parts[0])) {
+    const target = ['background', 'background-change'].includes(parts[1]) ? '#variations/background'
+      : ['pose', 'pose-variation'].includes(parts[1]) || parts[0] === 'workflows' ? '#variations' : '#home';
+    navigate(target, true);
     return;
-  }
-  if (parts[0] === 'workflow') {
-    if (parts[1] === 'pose-variation') {
-      renderPoseVariationPage();
-      restore();
-      return;
-    }
-    if (parts[1] === 'background-change') {
-      renderBackgroundChangePage();
-      restore();
-      return;
-    }
   }
   const validId = /^[a-f0-9]{32}$/.test(parts[1] || '');
   if ((parts[0] === 'job' || parts[0] === 'publish') && validId) {
@@ -172,16 +163,8 @@ async function renderRoute() {
     if (isPending(job)) schedulePoll();
     return;
   }
-  if (parts[0] === 'post' && (validId || examples.some(post => post.id === parts[1]))) {
-    let post = findPost(parts[1]);
-    if (!post) {
-      setScreen('loading'); app.innerHTML = `<section class="page">${subTop('社区作品', communityPage)}<div class="loading-page"><div class="spinner"></div></div></section>`;
-      try { post = (await api(`/api/posts/${parts[1]}`)).post; posts = [post, ...posts.filter(item => item.id !== post.id)]; }
-      catch (error) { if (version === routeVersion) renderUnavailable(error.message, '#community'); return; }
-    }
-    if (version === routeVersion) { renderPost(post); restore(); }
-    return;
-  }
+  // Post detail pages were retired; old shared links land on the community feed.
+  if (parts[0] === 'post') { navigate('#community', true); return; }
   navigate('#home', true);
 }
 function renderUnavailable(message, destination) {
@@ -281,7 +264,7 @@ function startHomeCarousel() {
   if (typeof matchMedia === 'function' && !matchMedia('(prefers-reduced-motion: reduce)').matches) carouselTimer = setInterval(() => showHomeSlide(carouselIndex + 1), 6000);
 }
 function historyCard(job) {
-  const title = typeof workflowJobName === 'function' ? workflowJobName(job) : `${modelName(job.model)}作品`;
+  const title = workflowJobName(job);
   return `<article class="history-card" data-job-card="${job.id}"><div class="history-open" role="button" tabindex="0" data-job="${job.id}" aria-label="查看${title}，${statusLabel(job)}"><span class="history-photo">${photo(job.image || job.original, '商品创作图片', '', true)}${isPending(job) || job.status === 'failed' ? `<span class="status-badge ${job.status}">${isPending(job) ? '<span class="status-dot"></span>' : ''}${statusLabel(job)}</span>` : ''}</span><span class="card-copy"><strong>${escapeHtml(title)}</strong><time>${escapeHtml(job.date)}</time></span></div></article>`;
 }
 function bindHistory(root = app) {
@@ -291,12 +274,12 @@ const showsJobs = () => screen === 'home' || screen === 'my';
 function renderCreate() {
   app.innerHTML = `<section class="page home-page">${homeHero()}<div class="home-body">${errorSlot}<div id="active-task"></div><section class="home-action-grid" aria-label="创作入口"><button id="start-create" class="home-action home-action-primary" type="button"><span class="home-action-icon">${icon('camera')}</span><span class="home-action-title">开拍</span><span class="home-action-copy">上传商品图<br>生成模特上身效果</span></button><button id="home-remake" class="home-action home-action-side home-action-remake" type="button"><span class="home-action-title">拍同款</span><span class="home-action-copy">截图心仪的商品图<br>照着生成同款效果</span></button><button id="home-variations" class="home-action home-action-side home-action-variations" type="button"><span class="home-action-title">创意裂变 ${icon('sparkle')}</span><span class="home-action-copy">一张商品图<br>裂变多种场景风格</span></button></section></div></section>`;
   startHomeCarousel();
-  document.querySelector('#home-remake').onclick = () => postPage(examples[0]);
-  document.querySelector('#home-variations').onclick = () => navigate('#workflows');
+  document.querySelector('#home-remake').onclick = communityPage;
+  document.querySelector('#home-variations').onclick = () => navigate('#variations');
   viewSignature = ''; updateView();
 }
 function renderMy() {
-  app.innerHTML = `<section class="page my-page"><header class="topbar"><div><span class="eyebrow">个人创作空间</span><h1 class="page-title">我的</h1></div><div class="header-actions"><a class="tasks-link" href="#tasks">任务</a><a class="tasks-link" href="#workflows">工作流</a><button class="text-button" id="batch-upload">批量上传</button></div></header><button class="my-profile" id="edit-profile" type="button" aria-label="编辑昵称，当前为${escapeHtml(nickname)}"><span class="small-avatar my-avatar">${escapeHtml(nickname.slice(0, 1))}</span><span class="my-profile-copy"><strong>${escapeHtml(nickname)}</strong><small>编辑昵称</small></span>${icon('arrow')}</button>${errorSlot}<section class="history-section" id="history-section"><div class="section-heading"><h2>创作历史 <span class="count" id="history-count"></span></h2><button class="icon-button" id="refresh-history" aria-label="刷新创作历史">${icon('refresh')}</button></div><div id="history-content"></div></section></section>`;
+  app.innerHTML = `<section class="page my-page"><header class="topbar"><div><span class="eyebrow">个人创作空间</span><h1 class="page-title">我的</h1></div><div class="header-actions"><a class="tasks-link" href="#tasks">任务</a><button class="text-button" id="batch-upload">批量上传</button></div></header><button class="my-profile" id="edit-profile" type="button" aria-label="编辑昵称，当前为${escapeHtml(nickname)}"><span class="small-avatar my-avatar">${escapeHtml(nickname.slice(0, 1))}</span><span class="my-profile-copy"><strong>${escapeHtml(nickname)}</strong><small>编辑昵称</small></span>${icon('arrow')}</button>${errorSlot}<section class="history-section" id="history-section"><div class="section-heading"><h2>创作历史 <span class="count" id="history-count"></span></h2><button class="icon-button" id="refresh-history" aria-label="刷新创作历史">${icon('refresh')}</button></div><div id="history-content"></div></section></section>`;
   document.querySelector('#batch-upload')?.addEventListener('click', openBatchUpload);
   document.querySelector('#edit-profile').onclick = editProfile;
   document.querySelector('#refresh-history').onclick = refreshJobs;
@@ -311,9 +294,9 @@ function updateView() {
     const start = document.querySelector('#start-create');
     start.querySelector('.home-action-copy').textContent = draft ? '商品图已准备好\n继续完成模特效果' : '上传商品图\n生成模特上身效果';
     start.querySelector('.home-action-title').textContent = draft ? '继续创作' : '开拍';
-    start.onclick = () => draft ? prepare() : navigate('#create');
+    start.onclick = () => draft ? prepare() : input.click();
     const pending = sortedJobs().find(isPending);
-    document.querySelector('#active-task').innerHTML = pending ? `<button class="task-banner" data-job="${pending.id}"><span class="task-banner-icon"><span class="spinner small"></span></span><span class="task-banner-copy"><strong>${statusLabel(pending)}</strong><small>你的${modelName(pending.model)}作品正在创作，点此查看</small><span class="task-progress" aria-hidden="true"><span></span></span></span>${icon('arrow')}</button>` : '';
+    document.querySelector('#active-task').innerHTML = pending ? `<button class="task-banner" data-job="${pending.id}"><span class="task-banner-icon"><span class="spinner small"></span></span><span class="task-banner-copy"><strong>${statusLabel(pending)}</strong><small>你的${escapeHtml(workflowJobName(pending))}正在创作，点此查看</small><span class="task-progress" aria-hidden="true"><span></span></span></span>${icon('arrow')}</button>` : '';
   } else {
     document.querySelector('#history-count').textContent = jobsLoaded ? history.length : '';
     updateHistoryCards();
@@ -398,7 +381,7 @@ function poseProgress(job) {
 function waiting() {
   setScreen('generating');
   const job = active;
-  app.innerHTML = `<section class="page detail-page">${subTop('正在创作')}<div class="state-panel generation-panel">${job?.original || draft ? photo(job?.original || draft, '正在创作的商品', 'task-product') : ''}<div class="status-line"><span class="spinner small"></span><span class="eyebrow">${job && typeof workflowJobName === 'function' ? escapeHtml(workflowJobName(job)) : modelName(job?.model || model)}</span></div><h1 id="task-status">${job ? statusLabel(job) : '正在提交'}</h1><p id="task-progress" ${poseProgress(job) ? '' : 'hidden'}>${poseProgress(job)}</p><p>可以离开，完成后在「我的」查看。</p>${errorSlot}<button class="primary" id="leave">返回创作 ${icon('arrow')}</button></div></section>`;
+  app.innerHTML = `<section class="page detail-page">${subTop('正在创作')}<div class="state-panel generation-panel">${job?.original || draft ? photo(job?.original || draft, '正在创作的商品', 'task-product') : ''}<div class="status-line"><span class="spinner small"></span><span class="eyebrow">${job ? escapeHtml(workflowJobName(job)) : modelName(model)}</span></div><h1 id="task-status">${job ? statusLabel(job) : '正在提交'}</h1><p id="task-progress" ${poseProgress(job) ? '' : 'hidden'}>${poseProgress(job)}</p><p>可以离开，完成后在「我的」查看。</p>${errorSlot}<button class="primary" id="leave">返回创作 ${icon('arrow')}</button></div></section>`;
   bindHeader(); document.querySelector('#leave').onclick = home; watchImages();
   if (pollError) pageError(pollError, app, () => void pollJobs());
 }
@@ -427,7 +410,6 @@ async function pollJobs() {
       }
     }
     updateView();
-    if ((screen === 'workflows' || screen === 'workflow-detail') && typeof refreshWorkflowRecent === 'function') refreshWorkflowRecent();
     if (screen !== 'result' && history.some(job => job.status === 'succeeded' && ['running','queued'].includes(previous.get(job.id)))) toast('图片已生成，可在「我的」查看');
   } catch (error) {
     pollError = '暂时连不上，任务可能仍在进行。';
@@ -491,8 +473,8 @@ function failedPage(job) {
 }
 function renderResult(job) {
   setScreen('result');
-  const outputTitle = typeof workflowJobName === 'function' ? workflowJobName(job) : '模特效果';
-  const outputMeta = typeof workflowNames === 'undefined' ? modelName(job.model) : (job.workflowType && job.workflowType !== 'tryon' ? workflowJobName(job) : modelName(job.model));
+  const outputTitle = workflowJobName(job);
+  const outputMeta = job.workflowType && job.workflowType !== 'tryon' ? workflowJobName(job) : modelName(job.model);
   const poseImages = job.workflowType === 'pose_variation' && Array.isArray(job.images) && job.images.length
     ? job.images.map(image => typeof image === 'string' ? image : image?.url).filter(Boolean)
     : [job.image].filter(Boolean);
@@ -674,6 +656,5 @@ sessionReady = (async () => {
 void renderRoute();
 void sessionReady.then(() => {
   updateView();
-  if ((screen === 'workflows' || screen === 'workflow-detail') && typeof refreshWorkflowRecent === 'function') refreshWorkflowRecent();
   if (busy) schedulePoll();
 });

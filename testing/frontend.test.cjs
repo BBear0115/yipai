@@ -19,8 +19,8 @@ async function context() {
   });
   vm.runInContext('openBatchUpload=()=>{}',sandbox);
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../mockup/community.js'),'utf8'),sandbox);
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'../mockup/studio.js'),'utf8'),sandbox);
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../mockup/app.js'),'utf8'),sandbox);
-  vm.runInContext(fs.readFileSync(path.join(__dirname,'../mockup/workflows.js'),'utf8'),sandbox);
   await vm.runInContext('sessionReady',sandbox);
   vm.runInContext('waiting=()=>{};prepare=()=>{};toast=()=>{};pollJobs=async()=>{};',sandbox);
   return sandbox;
@@ -83,6 +83,24 @@ test('community text is escaped and examples are clearly identified',async()=>{
   assert.ok(html.includes('官方示例'));
 });
 
+test('community posts overlay the product and remake bubble, with like, bookmark and share actions',async()=>{
+  const ctx=await context();
+  vm.runInContext("posts=[{id:'0123456789abcdef0123456789abcdef',nickname:'访客',productName:'衬衫',note:'好穿',image:'/image',productImage:'/input',created:new Date().toISOString()}];renderCommunity()",ctx);
+  const html=vm.runInContext('app.innerHTML',ctx);
+  assert.match(html,/feed-product-thumb[\s\S]*feed-remake[^>]*>[\s\S]*?拍同款/);
+  assert.match(html,/data-like="0123456789abcdef0123456789abcdef"[^>]*>[\s\S]*?<span>好看<\/span>/);
+  const actions=html.slice(html.indexOf('feed-actions'));
+  assert.ok(actions.indexOf('好看')<actions.indexOf('收藏')&&actions.indexOf('收藏')<actions.indexOf('分享'));
+  assert.doesNotMatch(html,/查看详情|data-post=/);
+});
+
+test('retired post detail links fall back to the community feed',async()=>{
+  const ctx=await context();
+  vm.runInContext("location.hash='#post/example-dress'",ctx);
+  await vm.runInContext('renderRoute()',ctx);
+  assert.equal(vm.runInContext('location.hash',ctx),'#community');
+});
+
 test('navigation writes task routes to the URL hash',async()=>{
   const ctx=await context();
   vm.runInContext("navigate('#job/0123456789abcdef0123456789abcdef')",ctx);
@@ -135,13 +153,14 @@ test('model library initializes only after app APIs and toast are available',()=
   assert.ok(html.indexOf('app.js')<html.indexOf('models.js'));
 });
 
-test('pose workflow offers 4, 6, and 8 image counts',async()=>{
+test('创意裂变 offers 4, 6, and 8 pose counts and only the two variation modes',async()=>{
   const ctx=await context();
-  vm.runInContext('renderPoseVariationPage()',ctx);
+  vm.runInContext("screen='variations';renderVariations()",ctx);
   const html=vm.runInContext('app.innerHTML',ctx);
-  assert.deepEqual(Array.from(vm.runInContext('[...app.innerHTML.matchAll(/data-count="(\\d+)"/g)].map(match=>Number(match[1]))',ctx)),[4,6,8]);
-  assert.match(html,/每个姿势单独生成一张完整图片/);
-  assert.doesNotMatch(html,/宫格/);
+  assert.deepEqual(Array.from(vm.runInContext('[...app.innerHTML.matchAll(/data-studio-count="(\\d+)"/g)].map(match=>Number(match[1]))',ctx)),[4,6,8]);
+  assert.deepEqual(Array.from(vm.runInContext('[...app.innerHTML.matchAll(/data-studio-mode="(\\w+)"/g)].map(match=>match[1])',ctx)),['pose','background']);
+  assert.match(html,/每个姿势输出一张独立图片/);
+  assert.doesNotMatch(html,/虚拟试穿|服装上身|创作历史|最近作品|最近任务|edit-profile|从左侧/);
 });
 
 test('pose result displays each output separately and offers all-image download',async()=>{
@@ -201,11 +220,12 @@ test('pose progress advances as individual image files complete',async()=>{
   assert.equal(vm.runInContext("controls['#task-progress'].hidden",ctx),false);
 });
 
-test('background workflow exposes the six supported scene IDs',async()=>{
+test('换背景 exposes the six supported scene IDs',async()=>{
   const ctx=await context();
-  assert.deepEqual(Array.from(vm.runInContext('sceneTypes.map(scene=>scene.id)',ctx)),['white','studio_gray','outdoor_street','indoor_minimal','beach','cafe']);
-  vm.runInContext('renderBackgroundChangePage()',ctx);
-  assert.match(vm.runInContext('app.innerHTML',ctx),/accept="image\/jpeg,image\/png,image\/webp"/);
+  vm.runInContext("screen='variations';renderVariations('background')",ctx);
+  const html=vm.runInContext('app.innerHTML',ctx);
+  assert.deepEqual(Array.from(vm.runInContext('[...app.innerHTML.matchAll(/data-studio-scene="(\\w+)"/g)].map(match=>match[1])',ctx)),['white','studio_gray','outdoor_street','indoor_minimal','beach','cafe']);
+  assert.match(html,/accept="image\/jpeg,image\/png,image\/webp"/);
 });
 
 test('background result keeps the chosen scene visible and labels mock output honestly',async()=>{
@@ -224,28 +244,31 @@ test('real background output has no sample notice',async()=>{
   assert.doesNotMatch(html,/preview-output-notice/);
 });
 
-test('recent task image retry controls are not nested inside the task link',async()=>{
+test('old workbench links redirect to the matching page',async()=>{
   const ctx=await context();
-  vm.runInContext("history=[{id:'recent',model:'female',status:'succeeded',created:new Date().toISOString(),image:'/api/jobs/recent/result'}]",ctx);
-  const html=vm.runInContext('renderWorkflowHistory()',ctx);
-  assert.match(html,/<article class="workflow-recent-item">/);
-  assert.equal((html.match(/<button\b/g)||[]).length,2);
-  assert.match(html,/<button class="workflow-recent-open"[^>]+data-recent-job="recent"/);
+  for (const [from,to] of [['#workflows','#variations'],['#workflow/pose-variation','#variations'],['#workflow/background-change','#variations/background'],['#create','#home'],['#create/background','#variations/background']]) {
+    vm.runInContext(`location.hash='${from}'`,ctx);
+    await vm.runInContext('renderRoute()',ctx);
+    assert.equal(vm.runInContext('location.hash',ctx),to,from);
+  }
 });
 
-test('workflow submission sends typed config with an idempotency key and opens its returned job',async()=>{
+test('创意裂变 submission sends typed config with an idempotency key and opens its returned job',async()=>{
   const ctx=await context();
   vm.runInContext(`
-    currentRoute='#workflow/pose-variation';
+    screen='variations';
+    currentRoute='#variations';
     navigate=route=>{location.hash=route};
-    workflowUpload='data:image/jpeg;base64,test';
+    renderVariations=()=>{};
+    studioState.mode='pose';studioState.poseCount=6;
+    studioState.upload='data:image/jpeg;base64,test';
     calls=[];
     api=async(path,options)=>{
       calls.push({path,options});
       return {job:{id:'0123456789abcdef0123456789abcdef',status:'queued',created:'2026-11-11T00:00:00Z'}};
     };
   `,ctx);
-  await vm.runInContext("submitWorkflow('pose_variation',{pose_count:6})",ctx);
+  await vm.runInContext('studioSubmit()',ctx);
   const body=JSON.parse(vm.runInContext('calls[0].options.body',ctx));
   assert.equal(vm.runInContext('calls[0].path',ctx),'/api/jobs');
   assert.equal(vm.runInContext('calls[0].options.method',ctx),'POST');
@@ -253,6 +276,7 @@ test('workflow submission sends typed config with an idempotency key and opens i
   assert.deepEqual(body.workflowConfig,{pose_count:6});
   assert.ok(typeof body.idempotencyKey==='string'&&body.idempotencyKey.length>0);
   assert.equal(vm.runInContext('location.hash',ctx),'#job/0123456789abcdef0123456789abcdef');
+  assert.equal(vm.runInContext('history[0].workflowType',ctx),'pose_variation');
 });
 
 test('refreshing a task route reads the existing task and never posts generation',async()=>{
@@ -308,12 +332,12 @@ test('submission completing after navigation preserves the new draft and current
   assert.equal(vm.runInContext('busy',ctx),true);
 });
 
- test('studio and history routes coexist with the current home navigation',async()=>{
+ test('创意裂变 and history routes coexist with the current home navigation',async()=>{
   const ctx=await context();
-  vm.runInContext("renderStudio=(mode)=>{studioMode=mode || 'tryon'};location.hash='#create/background_change'",ctx);
+  vm.runInContext("location.hash='#variations/background'",ctx);
   await vm.runInContext('renderRoute()',ctx);
-  assert.equal(vm.runInContext('screen',ctx),'studio');
-  assert.equal(vm.runInContext('studioMode',ctx),'background_change');
+  assert.equal(vm.runInContext('screen',ctx),'variations');
+  assert.equal(vm.runInContext('studioState.mode',ctx),'background');
   vm.runInContext("location.hash='#history'",ctx);
   await vm.runInContext('renderRoute()',ctx);
   assert.equal(vm.runInContext('screen',ctx),'my');

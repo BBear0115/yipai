@@ -22,34 +22,42 @@ function timeAgo(created) {
   if (minutes < 43200) return `${Math.floor(minutes / 1440)}天前`;
   return new Date(time).toLocaleDateString('zh-CN', {month:'long', day:'numeric'});
 }
-// One post reads like a social feed entry: author row, swipeable effect/original photos, actions, then caption.
+// Likes and bookmarks have no backend yet, so they persist per browser.
+const reactions = {likes:new Set(), saved:new Set()};
+try { for (const key of ['likes', 'saved']) reactions[key] = new Set(JSON.parse(localStorage.getItem(`yipai-${key}`) || '[]')); } catch {}
+function toggleReaction(key, id) {
+  const set = reactions[key];
+  if (set.has(id)) set.delete(id); else set.add(id);
+  try { localStorage.setItem(`yipai-${key}`, JSON.stringify([...set])); } catch {}
+  return set.has(id);
+}
+const likeCount = post => (post.likes || 0) + (reactions.likes.has(post.id) ? 1 : 0);
+const likeLabel = post => likeCount(post) ? String(likeCount(post)) : '好看';
+// One post reads like a social feed entry: author row, the effect photo with the product inset, actions, then caption.
 function feedPost(post) {
   const id = escapeHtml(post.id), name = escapeHtml(post.productName);
-  return `<article class="feed-post"><header class="feed-post-head"><span class="small-avatar">${escapeHtml(post.nickname.slice(0,1))}</span><strong>${escapeHtml(post.nickname)}</strong>${post.example?'<span class="example-tag">官方示例</span>':''}<button class="icon-button feed-post-more" data-more="${id}" aria-label="${name}的更多操作">${icon('more')}</button></header><div class="feed-slides" data-slides aria-label="${name}作品图片，左右滑动对照效果图与商品原图"><div class="feed-slide" role="button" tabindex="0" data-post="${id}" aria-label="查看${name}效果图">${photo(post.image, `${post.productName}模特效果图`, 'feed-result', true)}<span class="feed-slide-label">效果图</span></div><div class="feed-slide" role="button" tabindex="0" data-post="${id}" aria-label="查看${name}商品原图">${photo(post.productImage, `${post.productName}商品原图`, 'feed-original', true)}<span class="feed-slide-label">商品原图</span></div></div><div class="feed-dots" aria-hidden="true"><span class="current"></span><span></span></div><div class="feed-actions">${post.example?`<button class="feed-action" data-recreate="${id}">${icon('camera')}拍同款</button>`:''}<button class="feed-action" data-share="${id}" aria-label="分享${name}">${icon('send')}分享</button><button class="icon-button feed-save" data-save="${id}" aria-label="保存${name}效果图">${icon('save')}</button></div><p class="feed-caption"><strong>${escapeHtml(post.nickname)}</strong> <span>${name}</span> ${escapeHtml(post.note)}</p><div class="feed-meta">${post.example ? '官方示例' : escapeHtml(timeAgo(post.created))}<span aria-hidden="true">·</span><button data-post="${id}">查看详情</button></div></article>`;
+  const liked = reactions.likes.has(post.id), saved = reactions.saved.has(post.id);
+  return `<article class="feed-post"><header class="feed-post-head"><span class="small-avatar">${escapeHtml(post.nickname.slice(0,1))}</span><strong>${escapeHtml(post.nickname)}</strong>${post.example?'<span class="example-tag">官方示例</span>':''}<button class="icon-button feed-post-more" data-more="${id}" aria-label="${name}的更多操作">${icon('more')}</button></header><div class="feed-media"><div class="feed-photo" role="button" tabindex="0" data-view="${id}" aria-label="放大查看${name}效果图">${photo(post.image, `${post.productName}模特效果图`, 'feed-result', true)}</div><div class="feed-product"><div class="feed-product-thumb" role="button" tabindex="0" data-original="${id}" aria-label="查看${name}商品原图">${photo(post.productImage, `${post.productName}商品原图`, '', true)}</div><button class="feed-remake" data-recreate="${id}">${icon('camera')}拍同款</button></div></div><div class="feed-actions"><button class="feed-action" data-like="${id}" aria-pressed="${liked}" aria-label="觉得${name}好看">${icon('thumb')}<span>${likeLabel(post)}</span></button><button class="feed-action" data-bookmark="${id}" aria-pressed="${saved}" aria-label="收藏${name}">${icon('bookmark')}<span>收藏</span></button><button class="feed-action" data-share="${id}" aria-label="分享${name}">${icon('send')}<span>分享</span></button><button class="icon-button feed-save" data-save="${id}" aria-label="保存${name}效果图">${icon('save')}</button></div><p class="feed-caption"><strong>${escapeHtml(post.nickname)}</strong> <span>${name}</span> ${escapeHtml(post.note)}</p><div class="feed-meta">${post.example ? '官方示例' : escapeHtml(timeAgo(post.created))}</div></article>`;
 }
 function renderCommunity() {
   const all = [...posts, ...examples];
   app.innerHTML = `<section class="page community-page"><header class="topbar"><h1 class="page-title">社区</h1></header>${errorSlot}<div class="feed" data-signature="${escapeHtml(JSON.stringify(posts.map(post => post.id)))}">${all.map(feedPost).join('')}</div>${all.length ? '' : '<div class="empty-history">社区还没有作品，完成创作后可以分享你的效果。</div>'}</section>`;
-  document.querySelectorAll('[data-post]').forEach(button => {
-    button.onclick = () => postPage(findPost(button.dataset.post));
-    button.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); button.onclick(); } };
+  const bind = (attribute, action) => document.querySelectorAll(`[data-${attribute}]`).forEach(el => {
+    el.onclick = () => { const post = findPost(el.dataset[attribute]); if (post) action(post, el); };
+    if (el.getAttribute('role') === 'button') el.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); el.onclick(); } };
   });
-  document.querySelectorAll('[data-share]').forEach(button => button.onclick = () => share(findPost(button.dataset.share)));
-  document.querySelectorAll('[data-save]').forEach(button => button.onclick = () => save(findPost(button.dataset.save)));
-  document.querySelectorAll('[data-recreate]').forEach(button => button.onclick = () => recreatePost(findPost(button.dataset.recreate)));
-  document.querySelectorAll('[data-more]').forEach(button => button.onclick = () => postActions(findPost(button.dataset.more)));
-  document.querySelectorAll('[data-slides]').forEach(slides => {
-    const dots = slides.nextElementSibling.children;
-    slides.onscroll = () => {
-      const index = Math.round(slides.scrollLeft / Math.max(1, slides.clientWidth));
-      [...dots].forEach((dot, i) => dot.classList.toggle('current', i === index));
-    };
-  });
+  bind('view', post => openViewer(post));
+  bind('original', post => openViewer(post, true));
+  bind('recreate', recreatePost);
+  bind('like', (post, el) => { el.setAttribute('aria-pressed', toggleReaction('likes', post.id)); el.querySelector('span').textContent = likeLabel(post); });
+  bind('bookmark', (post, el) => { const saved = toggleReaction('saved', post.id); el.setAttribute('aria-pressed', saved); toast(saved ? '已收藏' : '已取消收藏'); });
+  bind('share', share);
+  bind('save', save);
+  bind('more', postActions);
   watchImages();
 }
 function postActions(post) {
-  if (!post) return;
-  sheet(post.productName, '', [{label:'查看作品详情', action:() => postPage(post)}, {label:'分享图片', action:() => share(post)}, {label:'保存效果图', action:() => save(post)}, ...(post.mine ? [{label:'撤回发布', danger:true, action:() => withdrawPost(post)}] : []), {label:'取消'}]);
+  sheet(post.productName, '', [{label:'分享图片', action:() => share(post)}, {label:'保存效果图', action:() => save(post)}, ...(post.mine ? [{label:'撤回发布', danger:true, action:() => withdrawPost(post)}] : []), {label:'取消'}]);
 }
 function withdrawPost(post) {
   sheet('撤回这条发布？', '个人创作历史会保留。', [{label:'保留'}, {label:'撤回', danger:true, action:async () => {
@@ -57,18 +65,6 @@ function withdrawPost(post) {
   }}]);
 }
 function findPost(id) { return [...posts, ...examples].find(post => post.id === id); }
-function renderPost(post) {
-  if (!post) return;
-  setScreen('post');
-  app.innerHTML = `<section class="page sub-page post-detail">${subTop('社区作品', communityPage)}<div class="post-author"><span class="small-avatar">${escapeHtml(post.nickname.slice(0,1))}</span><strong>${escapeHtml(post.nickname)}</strong>${post.example?'<span class="example-tag">官方示例</span>':''}</div><div class="post-compare">${photo(post.image, `${post.productName}模特效果图`, 'post-detail-image')}<button class="text-button" id="post-original-toggle">查看商品原图 ${icon('arrow')}</button><div id="post-original" hidden>${photo(post.productImage, `${post.productName}商品原图`, 'post-detail-image')}</div></div><h1>${escapeHtml(post.productName)}</h1><p class="post-note">${escapeHtml(post.note)}</p><div class="product-detail">${photo(post.productImage, `${post.productName}商品缩略图`)}<div><span>本次使用的商品</span><strong>${escapeHtml(post.productName)}</strong></div></div><div class="detail-actions">${post.example?`<button class="primary" id="recreate-example">${icon('camera')}拍同款</button>`:''}<button class="secondary" id="post-share">${icon('share')}分享图片</button>${post.mine?'<button class="withdraw secondary" id="withdraw">撤回发布</button>':''}</div></section>`;
-  bindHeader(communityPage);
-  const toggle = document.querySelector('#post-original-toggle');
-  toggle.onclick = () => { const original = document.querySelector('#post-original'); original.hidden = !original.hidden; toggle.innerHTML = `${original.hidden ? '查看' : '收起'}商品原图 ${icon('arrow')}`; watchImages(original); };
-  document.querySelector('#recreate-example')?.addEventListener('click', () => recreatePost(post));
-  document.querySelector('#post-share').onclick = () => share(post);
-  document.querySelector('#withdraw')?.addEventListener('click', () => withdrawPost(post));
-  watchImages();
-}
 function renderPublish(job) {
   setScreen('publish');
   const saved = publishDrafts.get(job.id) || {};
@@ -84,7 +80,7 @@ function renderPublish(job) {
     button.disabled = true; button.textContent = '正在发布…'; pageError('');
     try {
       const data = await api('/api/posts', {method:'POST', body:JSON.stringify({jobId:job.id, nickname, productName, note})});
-      posts = [data.post, ...posts.filter(post => post.id !== data.post.id)]; publishDrafts.delete(job.id); postPage(data.post); toast('已发布到社区');
+      posts = [data.post, ...posts.filter(post => post.id !== data.post.id)]; publishDrafts.delete(job.id); communityPage(); toast('已发布到社区');
     } catch (error) { pageError(error.message); button.disabled = false; button.innerHTML = `发布到社区 ${icon('arrow')}`; }
   };
   watchImages();
