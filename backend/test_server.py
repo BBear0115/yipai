@@ -18,9 +18,9 @@ from PIL import Image
 import server
 
 
-def source(size=(600, 800)):
+def source(size=(600, 800), color='#356da0'):
     output = BytesIO()
-    Image.new('RGB', size, '#356da0').save(output, 'PNG')
+    Image.new('RGB', size, color).save(output, 'PNG')
     return output.getvalue()
 
 
@@ -52,6 +52,244 @@ class BackendTests(unittest.TestCase):
 
     def post(self, client, body):
         return json.load(client.open(Request(self.base+'/api/jobs', data=json.dumps(body).encode(), headers={'Content-Type': 'application/json'}, method='POST')))
+
+    def tryon_input(self, role, color='#356da0', size=(600, 800), **fields):
+        return {'role': role, 'image': 'data:image/png;base64,' + base64.b64encode(source(size, color)).decode(), **fields}
+
+    def tryon_payload(self, inputs=None, **changes):
+        inputs = inputs if inputs is not None else [self.tryon_input('upper')]
+        return self.payload(workflowType='tryon', workflowConfig={'clothing_mode': 'multi', 'output_count': 1}, inputImages=inputs, **changes)
+
+    @patch.object(server, 'credentials', return_value=('test-key', None))
+    def test_tryon_references_generate_separate_numbered_requests_and_keep_detail_ownership(self, credentials):
+        owner = self.client()
+        # Upload order deliberately differs from provider role order.
+        inputs = [self.tryon_input('detail', 'orange', size=(160, 160), garmentRole='lower'),
+                  self.tryon_input('lower', 'blue'), self.tryon_input('reference', 'red', size=(400, 600)),
+                  self.tryon_input('model', 'purple', size=(400, 500)), self.tryon_input('upper', 'green'),
+                  self.tryon_input('reference', 'yellow')]
+        body = self.tryon_payload(inputs)
+        body['workflowConfig'].update(output_count=2, instruction='奶油色搭配，棕色乐福鞋')
+        with patch.object(server, 'generate'):
+            job = self.post(owner, body)['job']
+        self.assertEqual(len(job['inputImages']), 6)
+        self.assertTrue(all(set(item) <= {'role', 'url', 'garmentRole'} for item in job['inputImages']))
+        with server.connect() as db:
+            stored = db.execute('SELECT * FROM jobs WHERE id=?', (job['id'],)).fetchone()
+        self.assertNotIn('base64', stored['input_images'])
+        self.assertNotIn('base64', stored['workflow_config'])
+        requests = []
+        def respond(request, **kwargs):
+            requests.append(json.loads(request.data))
+            return BytesIO(json.dumps({'output': [{'result': base64.b64encode(source()).decode()}]}).encode())
+        with patch.object(server, 'urlopen', side_effect=respond):
+            server.generate(job['id'], 'female', 'tryon', job['workflowConfig'])
+        self.assertEqual(len(requests), 8)
+        expected_order = ([2, 4, 1, 3, 0], [2, 4, 1, 3, 0], [5, 4, 1, 3, 0], [5, 4, 1, 3, 0])
+        for request, order in zip(requests[::2], expected_order):
+            content = request['input'][0]['content']
+            expected = [server.image_data_url(server.parse_image(inputs[index]['image'], min_dimension=128)) for index in order]
+            self.assertEqual([item['image_url'] for item in content[1:]], expected)
+            self.assertIn('图1是画面参考；图2是上装商品；图3是下装商品；图4是模特身份；图5是服装细节', content[0]['text'])
+            self.assertIn('图5只补充图3（下装商品）', content[0]['text'])
+            self.assertIn('棕色乐福鞋', content[0]['text'])
+            self.assertIn('只替换图1中与已上传商品冲突的服装', content[0]['text'])
+            self.assertEqual(request['size'], '1024x1536')
+        for request in requests[1::2]:
+            content = request['input'][0]['content']
+            self.assertEqual(len(content), 3)
+            self.assertIn('必须保留图1已完成的所有商品', content[0]['text'])
+            self.assertIn('图2是唯一的人脸和发型参考', content[0]['text'])
+            self.assertEqual(content[2]['image_url'], server.image_data_url(server.parse_image(inputs[3]['image'], min_dimension=400)))
+            self.assertEqual(content[1]['image_url'], server.image_data_url(server.watermark(source())))
+        restored = json.load(owner.open(self.base + '/api/jobs/' + job['id']))['job']
+        self.assertEqual(restored['status'], 'succeeded')
+        self.assertEqual(len(restored['images']), 4)
+        self.assertEqual(restored['image'], restored['images'][0])
+
+    @patch.object(server, 'credentials', return_value=('test-key', None))
+    @patch.object(server, 'generate')
+    def test_tryon_invalid_roles_config_and_reference_urls_do_not_create_jobs(self, generator, credentials):
+        owner = self.client()
+        invalid = [
+            {'inputImages': []},
+            {'inputImages': [self.tryon_input('unknown')]},
+            {'inputImages': [self.tryon_input('upper'), self.tryon_input('upper')]},
+            {'inputImages': [self.tryon_input('single')]},
+            {'inputImages': [self.tryon_input('reference')]},
+            {'inputImages': [self.tryon_input('upper'), self.tryon_input('detail', garmentRole='lower')]},
+            {'inputImages': [self.tryon_input('upper'), self.tryon_input('detail')]},
+            {'inputImages': [self.tryon_input('upper', garmentRole='upper')]},
+            {'inputImages': [{'role': 'upper', 'image': '/api/jobs/another/input'}]},
+            {'inputImages': [self.tryon_input('upper'), {'role': 'reference', 'image': 'https://example.com/image.jpg'}]},
+            {'inputImages': [self.tryon_input('upper'), *[self.tryon_input('reference') for _ in range(9)]]},
+            {'inputImages': [self.tryon_input('upper'), *[self.tryon_input('detail', garmentRole='upper') for _ in range(5)]]},
+            {'inputImages': [self.tryon_input('upper'), self.tryon_input('model'), self.tryon_input('model')]},
+            {'modelId': 'invalid'},
+            {'modelId': uuid4().hex, 'inputImages': [self.tryon_input('upper'), self.tryon_input('model')]},
+            {'workflowConfig': {'clothing_mode': 'auto'}},
+            {'workflowConfig': {'clothing_mode': 'single'}},
+            {'workflowConfig': {'clothing_mode': 'multi', 'output_count': True}},
+            {'workflowConfig': {'clothing_mode': 'multi', 'output_count': 3}},
+            {'workflowConfig': {'clothing_mode': 'multi', 'instruction': '长' * 501}},
+            {'workflowConfig': {'clothing_mode': 'multi', 'instruction': []}},
+        ]
+        for change in invalid:
+            with self.subTest(change=str(change)[:90]), self.assertRaises(HTTPError) as error:
+                self.post(owner, {**self.tryon_payload(), **change})
+            self.assertEqual(error.exception.code, 400)
+        self.assertFalse(generator.called)
+        self.assertEqual(json.load(owner.open(self.base + '/api/jobs'))['jobs'], [])
+
+    @patch.object(server, 'credentials', return_value=('test-key', None))
+    @patch.object(server, 'generate')
+    def test_tryon_accepts_single_or_only_lower_and_limits_combined_uploads(self, generator, credentials):
+        owner = self.client()
+        for mode, role in [('single', 'single'), ('multi', 'lower')]:
+            body = self.tryon_payload([self.tryon_input(role)])
+            body['workflowConfig']['clothing_mode'] = mode
+            job = self.post(owner, body)['job']
+            self.assertEqual(job['inputImages'][0]['role'], role)
+            self.assertEqual(job['inputImages'][1]['role'], 'model')
+            self.assertEqual(job['model'], 'female')
+        with patch.object(server, 'MAX_INPUT', len(source()) + 10):
+            with self.assertRaises(HTTPError) as error:
+                self.post(owner, self.tryon_payload([self.tryon_input('upper'), self.tryon_input('lower')]))
+            self.assertEqual(error.exception.code, 400)
+            self.assertIn('合计', json.load(error.exception)['error'])
+
+    @patch.object(server, 'credentials', return_value=('test-key', None))
+    @patch.object(server, 'generate')
+    def test_tryon_accepts_small_product_pngs_and_keeps_original_dimensions(self, generator, credentials):
+        for role, mode, size in [('upper', 'multi', (330, 502)), ('lower', 'multi', (480, 444)), ('single', 'single', (454, 454))]:
+            with self.subTest(role=role, size=size):
+                owner = self.client()
+                body = self.tryon_payload([self.tryon_input(role, size=size)])
+                body['workflowConfig']['clothing_mode'] = mode
+                job = self.post(owner, body)['job']
+                image = owner.open(self.base + job['inputImages'][0]['url']).read()
+                self.assertEqual(Image.open(BytesIO(image)).size, size)
+        owner = self.client()
+        with self.assertRaises(HTTPError) as error:
+            self.post(owner, self.tryon_payload([self.tryon_input('upper', size=(200, 240))]))
+        self.assertEqual(error.exception.code, 400)
+        self.assertEqual(json.load(owner.open(self.base + '/api/jobs'))['jobs'], [])
+
+    @patch.object(server, 'credentials', return_value=('test-key', None))
+    def test_tryon_library_model_snapshot_is_private_and_survives_model_deletion(self, credentials):
+        owner = self.client(); stranger = self.client()
+        created = json.load(owner.open(Request(self.base + '/api/models', data=json.dumps({
+            'name': '专属模特', 'gender': 'female', 'image': self.tryon_input('model', 'purple', size=(400, 600))['image'],
+        }).encode(), headers={'Content-Type': 'application/json'}, method='POST')))['model']
+        model_id = created['id']
+        body = self.tryon_payload(modelId=model_id)
+        with patch.object(server, 'generate'):
+            with self.assertRaises(HTTPError) as error:
+                self.post(stranger, body)
+            self.assertEqual(error.exception.code, 400)
+            job = self.post(owner, body)['job']
+            for item in job['inputImages']:
+                self.assertEqual(owner.open(self.base + item['url']).status, 200)
+                with self.assertRaises(HTTPError) as error:
+                    stranger.open(self.base + item['url'])
+                self.assertEqual(error.exception.code, 404)
+            snapshot = owner.open(self.base + job['inputImages'][1]['url']).read()
+            owner.open(Request(self.base + '/api/models/' + model_id, method='DELETE')).read()
+            self.assertEqual(self.post(owner, body)['job']['id'], job['id'])
+            # Regeneration re-uploads private stored inputs, independent of the deleted library item.
+            inputs = [{**item, 'image': 'data:image/jpeg;base64,' + base64.b64encode(owner.open(self.base + item['url']).read()).decode()} for item in job['inputImages']]
+            regenerated = self.post(owner, self.tryon_payload(inputs))['job']
+        self.assertNotEqual(regenerated['id'], job['id'])
+        with patch.object(server, 'request_image', return_value=server.watermark(source())) as request:
+            server.generate(regenerated['id'], 'female', 'tryon', regenerated['workflowConfig'])
+        self.assertEqual(request.call_args.args[1][1], server.image_data_url(server.parse_image('data:image/jpeg;base64,' + base64.b64encode(snapshot).decode(), min_dimension=400)))
+        self.assertIn('只提供模特脸型、五官、发型和可识别身份', request.call_args.args[0])
+        self.assertIn('不要机械地给所有商品搭配灰色长裤和白色运动鞋', request.call_args.args[0])
+
+    @patch.object(server, 'credentials', return_value=('test-key', None))
+    @patch.object(server, 'generate')
+    def test_tryon_maximum_sixteen_results_zip_and_all_inputs_are_private_and_deleted(self, generator, credentials):
+        owner = self.client(); stranger = self.client()
+        inputs = [self.tryon_input('upper'), *[self.tryon_input('reference') for _ in range(8)]]
+        body = self.tryon_payload(inputs)
+        body['workflowConfig']['output_count'] = 2
+        job = self.post(owner, body)['job']
+        self.assertEqual([item['role'] for item in job['inputImages']].count('model'), 0)
+        for index in range(1, 17):
+            server.data_path(job['id'], f'result-{index}').write_bytes(source())
+        server.update_job(job['id'], status='succeeded')
+        restored = json.load(owner.open(self.base + '/api/jobs/' + job['id']))['job']
+        self.assertEqual(len(restored['images']), 16)
+        for path in [restored['images'][-1], '/api/jobs/' + job['id'] + '/download.zip']:
+            self.assertEqual(owner.open(self.base + path).status, 200)
+            with self.assertRaises(HTTPError) as error:
+                stranger.open(self.base + path)
+            self.assertEqual(error.exception.code, 404)
+        with zipfile.ZipFile(BytesIO(owner.open(self.base + '/api/jobs/' + job['id'] + '/download.zip').read())) as archive:
+            self.assertEqual(len(archive.namelist()), 16)
+            self.assertIn('yipai-tryon-16.jpg', archive.namelist())
+            self.assertIsNone(archive.testzip())
+        owner.open(Request(self.base + '/api/jobs/' + job['id'], method='DELETE')).read()
+        self.assertFalse(any(server.DATA.glob(job['id'] + '.*')))
+
+    def test_tryon_reference_and_identity_role_rules_keep_uncovered_outfit(self):
+        inputs = [{'role': 'reference'}, {'role': 'lower'}]
+        prompt = server.build_tryon_prompt('female', inputs, {'clothing_mode': 'multi'})
+        self.assertIn('下装只替换下半身', prompt)
+        self.assertIn('未被商品覆盖的原有上下装、鞋履、包与配饰自然保留', prompt)
+        self.assertIn('保留图1人物的脸部身份', prompt)
+        self.assertNotIn('成年女性', prompt)
+        self.assertNotIn('智能搭配：', prompt)
+        with_identity = server.build_tryon_prompt('female', [*inputs, {'role': 'model'}], {'clothing_mode': 'multi'})
+        self.assertIn('最终画面必须是图3中的同一个人', with_identity)
+        self.assertIn('完全忽略图1人物的人脸、五官、发型和身份', with_identity)
+
+    @patch.object(server, 'credentials', return_value=('test-key', None))
+    def test_legacy_tryon_snapshots_regenerate_with_original_identity_and_numbering(self, credentials):
+        owner = self.client()
+        with patch.object(server, 'generate'):
+            original = self.post(owner, self.payload(model='male'))['job']
+        self.assertEqual(original['workflowConfig']['clothing_mode'], 'auto')
+        self.assertEqual([item['role'] for item in original['inputImages']], ['auto', 'model'])
+        restored_inputs = []
+        for item in original['inputImages']:
+            data_url = 'data:image/jpeg;base64,' + base64.b64encode(owner.open(self.base + item['url']).read()).decode()
+            restored_inputs.append({**item, 'image': data_url})
+        body = self.payload(model='male', workflowType='tryon', workflowConfig=original['workflowConfig'], inputImages=restored_inputs)
+        # Regeneration must use the supplied identity snapshot even if defaults disappear.
+        with patch.object(server, 'STATIC', server.DATA / 'no-default-assets'), patch.object(server, 'generate'):
+            regenerated = self.post(owner, body)['job']
+        self.assertNotEqual(regenerated['id'], original['id'])
+        self.assertEqual(regenerated['workflowConfig'], original['workflowConfig'])
+        self.assertEqual([item['role'] for item in regenerated['inputImages']], ['auto', 'model'])
+        with patch.object(server, 'STATIC', server.DATA / 'no-default-assets'), patch.object(server, 'request_image', return_value=source()) as request:
+            server.generate(regenerated['id'], 'male', 'tryon', regenerated['workflowConfig'])
+        expected = [server.image_data_url(server.parse_image(item['image'])) for item in restored_inputs]
+        self.assertEqual(request.call_args.args[1], expected)
+        self.assertIn('图1是目标商品；图2是模特身份', request.call_args.args[0])
+        self.assertIn('鞋履展示上脚与完整鞋型', request.call_args.args[0])
+        self.assertIn('成年男性', request.call_args.args[0])
+
+    @patch.object(server, 'credentials', return_value=('test-key', None))
+    @patch.object(server, 'generate')
+    def test_explicit_auto_mode_requires_one_auto_garment_and_keeps_role_limits(self, generator, credentials):
+        owner = self.client()
+        invalid = [
+            [self.tryon_input('auto'), self.tryon_input('auto')],
+            [self.tryon_input('auto'), self.tryon_input('upper')],
+            [self.tryon_input('single')],
+            [self.tryon_input('reference')],
+            [self.tryon_input('auto'), self.tryon_input('detail', garmentRole='upper')],
+            [self.tryon_input('auto'), *[self.tryon_input('reference') for _ in range(9)]],
+            [self.tryon_input('auto'), self.tryon_input('model'), self.tryon_input('model')],
+        ]
+        for inputs in invalid:
+            with self.subTest(roles=[item['role'] for item in inputs]), self.assertRaises(HTTPError) as error:
+                self.post(owner, self.payload(workflowType='tryon', workflowConfig={'clothing_mode': 'auto'}, inputImages=inputs))
+            self.assertEqual(error.exception.code, 400)
+        valid = [self.tryon_input('auto'), self.tryon_input('detail', size=(160, 160), garmentRole='auto')]
+        job = self.post(owner, self.payload(workflowType='tryon', workflowConfig={'clothing_mode': 'auto'}, inputImages=valid))['job']
+        self.assertEqual(job['inputImages'][1]['garmentRole'], 'auto')
 
     def test_input_rejects_corrupt_small_and_nonimage(self):
         for value in ('hello', 'data:image/png;base64,aGVsbG8=', 'data:image/png;base64,'+base64.b64encode(source((100,100))).decode()):

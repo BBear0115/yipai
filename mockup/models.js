@@ -1,6 +1,4 @@
 // 模特库管理
-let allModels = [];
-let selectedModelId = null;
 
 async function loadModels() {
   try {
@@ -17,22 +15,28 @@ async function loadModels() {
 function renderModelPicker() {
   const container = document.createElement('div');
   container.className = 'model-picker';
+  container.setAttribute('role', 'presentation');
   container.innerHTML = `
-    <div class="model-picker-header">
-      <h3>选择模特</h3>
-      <button class="icon-button" data-close>${icon('close')}</button>
-    </div>
-    <div class="model-grid" data-models></div>
-    <div class="model-actions">
-      <button class="text-button" data-upload>上传自定义模特</button>
-    </div>
+    <section class="model-picker-panel" role="dialog" aria-modal="true" aria-labelledby="model-picker-title">
+      <div class="model-picker-header">
+        <h3 id="model-picker-title">从模特库选择</h3>
+        <button class="icon-button" type="button" data-close aria-label="关闭">${icon('close')}</button>
+      </div>
+      <div class="model-grid" data-models></div>
+      <div class="model-actions"><button class="text-button" type="button" data-upload>上传自定义模特</button></div>
+    </section>
   `;
 
   const grid = container.querySelector('[data-models]');
+  if (!allModels.length) grid.innerHTML = '<p class="model-empty">模特库还是空的，可以上传专属模特照片。</p>';
   allModels.forEach(model => {
     const card = document.createElement('div');
     card.className = 'model-card';
+    card.setAttribute('role', 'button');
+    card.setAttribute('tabindex', '0');
+    card.setAttribute('aria-pressed', String(model.id === selectedModelId));
     if (model.id === selectedModelId) card.classList.add('selected');
+    card.dataset.libraryModel = model.id;
     card.innerHTML = `
       <img src="${escapeHtml(model.image)}" alt="${escapeHtml(model.name)}" loading="lazy">
       <div class="model-info">
@@ -43,9 +47,10 @@ function renderModelPicker() {
     `;
     card.addEventListener('click', (e) => {
       if (e.target.closest('[data-delete]')) {
+        e.stopPropagation();
         deleteModel(model.id);
       } else {
-        selectModel(model.id);
+        selectLibraryModel(model.id);
       }
     });
     grid.appendChild(card);
@@ -53,31 +58,22 @@ function renderModelPicker() {
 
   container.querySelector('[data-close]').onclick = () => container.remove();
   container.querySelector('[data-upload]').onclick = () => showModelUpload();
+  container.addEventListener('click',event=>{if(event.target===container)container.remove();});
 
   return container;
 }
 
-function selectModel(modelId) {
+function selectLibraryModel(modelId) {
   selectedModelId = modelId;
-  const picker = document.querySelector('.model-picker');
-  if (picker) {
-    picker.querySelectorAll('.model-card').forEach(card => card.classList.remove('selected'));
-    const selected = Array.from(picker.querySelectorAll('.model-card')).find(card =>
-      card.querySelector('img').src.includes(modelId)
-    );
-    if (selected) {
-      selected.classList.add('selected');
-      selected.innerHTML += `<div class="model-check">${icon('check')}</div>`;
-    }
-  }
-
-  // 更新主界面显示
+  if (typeof tryonDraftRevision !== 'undefined') { tryonDraftRevision++; pendingSubmission = null; }
   const selectedModel = allModels.find(m => m.id === modelId);
   if (selectedModel) {
-    try {
-      localStorage.setItem('yipai-selected-model-id', modelId);
-    } catch {}
+    model = selectedModel.gender === 'male' ? 'male' : 'female';
+    if (typeof tryonDraftState !== 'undefined') tryonDraftState.modelImage = null;
+    try { localStorage.setItem('yipai-selected-model-id', modelId); localStorage.setItem('yipai-model', model); } catch {}
   }
+  document.querySelector('.model-picker')?.remove();
+  if (screen === 'prepare') renderTryonStudio();
 }
 
 function showModelUpload() {
@@ -88,24 +84,24 @@ function showModelUpload() {
       <h3>上传自定义模特</h3>
       <form id="model-upload-form">
         <div class="form-group">
-          <label>模特名称</label>
-          <input type="text" name="name" placeholder="例如：时尚模特 A" maxlength="20" required>
+          <label for="model-upload-name">模特名称</label>
+          <input id="model-upload-name" type="text" name="name" placeholder="例如：时尚模特 A" maxlength="20" required>
         </div>
         <div class="form-group">
-          <label>性别</label>
-          <select name="gender" required>
+          <label for="model-upload-gender">性别</label>
+          <select id="model-upload-gender" name="gender" required>
             <option value="female">女性</option>
             <option value="male">男性</option>
           </select>
         </div>
         <div class="form-group">
-          <label>模特照片</label>
-          <input type="file" name="image" accept="image/png,image/jpeg,image/webp" required>
-          <small>支持 PNG、JPG、WebP 格式，建议竖版全身照</small>
+          <label for="model-upload-image">模特照片</label>
+          <input id="model-upload-image" type="file" name="image" accept="image/png,image/jpeg,image/webp" required>
+          <small>支持 PNG、JPG、WebP，至少 400 × 400 像素；建议清晰正脸或上半身照。</small>
         </div>
         <div class="form-actions">
           <button type="button" class="text-button" data-cancel>取消</button>
-          <button type="submit" class="primary-button">上传</button>
+          <button type="submit" class="primary">上传</button>
         </div>
       </form>
     </div>
@@ -137,13 +133,7 @@ function showModelUpload() {
         toast('模特上传成功');
         dialog.remove();
         await loadModels();
-
-        // 刷新模特选择器
-        const picker = document.querySelector('.model-picker');
-        if (picker) {
-          const newPicker = renderModelPicker();
-          picker.replaceWith(newPicker);
-        }
+        if (response.model?.id) selectLibraryModel(response.model.id);
       } catch (error) {
         toast(error.message || '上传失败');
       }
@@ -162,13 +152,13 @@ async function deleteModel(modelId) {
     await api(`/api/models/${modelId}`, { method: 'DELETE' });
     toast('模特已删除');
     await loadModels();
-
-    // 刷新模特选择器
-    const picker = document.querySelector('.model-picker');
-    if (picker) {
-      const newPicker = renderModelPicker();
-      picker.replaceWith(newPicker);
+    if (selectedModelId === modelId) {
+      selectedModelId = null;
+      try { localStorage.removeItem('yipai-selected-model-id'); } catch {}
     }
+
+    const picker = document.querySelector('.model-picker');
+    if (picker) picker.replaceWith(renderModelPicker());
   } catch (error) {
     toast(error.message || '删除失败');
   }
@@ -179,10 +169,8 @@ async function deleteModel(modelId) {
   await loadModels();
   try {
     const savedId = localStorage.getItem('yipai-selected-model-id');
-    if (savedId && allModels.find(m => m.id === savedId)) {
-      selectedModelId = savedId;
-    } else if (allModels.length > 0) {
-      selectedModelId = allModels[0].id;
-    }
+    if (savedId && allModels.find(m => m.id === savedId)) selectedModelId = savedId;
+    else { selectedModelId = null; localStorage.removeItem('yipai-selected-model-id'); }
   } catch {}
+  if (screen === 'prepare') renderTryonStudio();
 })();

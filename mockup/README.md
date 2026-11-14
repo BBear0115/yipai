@@ -27,13 +27,14 @@ IMAGE2_GATEWAY_API_KEY=<密钥>
 
 - 无登录的匿名会话，HttpOnly Cookie；不同访客任务和原图、成品图互相隔离。
 - 上传商品原图，附加所选男女模特参考图，向指定网关发送 `gpt-image-2.5-flare` 请求。
+- 试穿支持上装、下装、连体服装，最多 8 张独立画面参考、1 张模特身份图和 4 张按商品归属的细节图。每张画面参考生成 1 或 2 张，未上传参考时智能设计搭配。
 - 异步任务与轮询，离开页面或刷新后仍可在创作历史找回；SQLite 持久化。
 - 单用户最多一个进行中任务，全局最多十个排队任务、两个并发调用。
 - 幂等提交，重发相同请求编号不会再次调用模型。
 - 输入格式、体积、尺寸与解码校验；原图去除附带元数据。
 - 使用 `1024x1536` 竖版输出、`high` 质量及 300 秒请求超时。
 - 服务端在成品像素中合成“衣拍 · 人工智能生成”水印；成功任务只交付带水印图片。
-- 重新生成复用原商品和模特；旧结果不覆盖。保存和分享均使用服务端成品。
+- 重新生成复用原商品、画面参考、模特身份和细节图；旧结果不覆盖。保存和分享均使用服务端成品，多图结果可逐张查看或打包下载。
 - 失败状态、删除历史记录；运行中任务禁止删除。
 - 服务进程重启时，把尚未完成的本地任务标为失败，不自动重复调用计费接口。
 - 手机端创作工作台、图片全屏查看和任务路由恢复；页面细节和验收记录见 [前端优化验收](../testing/2026-11-11/前端优化验收.md)。
@@ -47,8 +48,34 @@ IMAGE2_GATEWAY_API_KEY=<密钥>
 | GET `/api/jobs` | 当前访客最近 100 条任务 |
 | GET `/api/jobs/{id}` | 状态：queued、running、succeeded、failed |
 | GET `/api/jobs/{id}/input` | 当前访客的原商品图 |
+| GET `/api/jobs/{id}/input-{n}` | 当前访客任务保存的服装、画面、人物或细节参考图 |
 | GET `/api/jobs/{id}/result` | 成功任务的带水印结果 |
+| GET `/api/jobs/{id}/result-{n}` | 多图任务中的第 n 张独立成片 |
+| GET `/api/jobs/{id}/download.zip` | 打包下载当前任务全部独立成片 |
 | DELETE `/api/jobs/{id}` | 删除当前访客的已结束任务与其图片 |
+
+多图试穿仍使用 `POST /api/jobs`。`model` 只传 `female` 或 `male`；选择模特库时额外传 `modelId`。上传人物图则放入 `inputImages` 的 `model` 角色，两者只能选一个：
+
+```js
+{
+  image: 'data:image/jpeg;base64,...', // 第一件商品，兼容旧单图接口
+  model: 'female',
+  idempotencyKey: 'UUID',
+  workflowType: 'tryon',
+  workflowConfig: {clothing_mode: 'multi', output_count: 1, instruction: ''},
+  inputImages: [
+    {role: 'upper', image: 'data:image/jpeg;base64,...'},
+    {role: 'lower', image: 'data:image/jpeg;base64,...'},
+    {role: 'reference', image: 'data:image/jpeg;base64,...'},
+    {role: 'model', image: 'data:image/jpeg;base64,...'},
+    {role: 'detail', garmentRole: 'upper', image: 'data:image/jpeg;base64,...'}
+  ]
+}
+```
+
+`clothing_mode: 'single'` 时使用一张 `single` 角色商品图；上下装模式可只上传 `upper` 或 `lower`。每张参考分别调用生成接口，不混合多张画面的场景。细节图的 `garmentRole` 必须指向本次已上传的主商品。
+
+所有图片保存在任务目录，API 返回的 `inputImages` 只包含角色和受当前会话保护的 `url`，不会把 base64 保存进任务配置。模特库照片在提交时复制为任务快照，后续删除模特库条目不会破坏旧任务的重新生成。输入总大小上限 20 MB、请求上限 30 MB；前端上传时会压缩图片。
 
 ## 验证
 

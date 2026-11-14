@@ -364,9 +364,11 @@ textarea.field-input { resize:vertical; min-height:140px; }
 }
 /* 模特选择器 */
 .model-picker { position:fixed; inset:0; z-index:1000; background:var(--overlay); display:flex; align-items:center; justify-content:center; padding:20px; }
+.model-picker-panel { width:min(720px,100%); max-height:min(760px,calc(100dvh - 40px)); overflow:auto; border:1px solid var(--line); border-radius:16px; background:var(--bg); box-shadow:0 24px 80px #0009; }
 .model-picker-header { display:flex; align-items:center; justify-content:space-between; padding:20px; border-bottom:1px solid var(--line); }
 .model-picker-header h3 { margin:0; font-size:1.25rem; }
 .model-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(120px,1fr)); gap:16px; padding:20px; max-height:60vh; overflow-y:auto; }
+.model-empty { grid-column:1/-1; padding:28px 12px; color:var(--muted); text-align:center; font-size:.875rem; }
 .model-card { position:relative; cursor:pointer; border-radius:12px; overflow:hidden; border:2px solid transparent; transition:all .2s; }
 .model-card:hover { border-color:var(--red); }
 .model-card.selected { border-color:var(--red); }

@@ -35,6 +35,7 @@ let busy = false, submitting = false, toastTimer, pollTimer, pendingSubmission =
 let currentRoute = '', routeVersion = 0, viewSignature = '', pollError = '';
 let sessionReady, sessionError = '', jobsLoaded = false;
 let carouselIndex = 0, carouselTimer;
+let allModels = [], selectedModelId = null;
 const scrollPositions = new Map();
 const publishDrafts = new Map();
 
@@ -88,11 +89,11 @@ function home() { navigate('#home'); }
 function myPage() { navigate('#my'); }
 function historyPage() { myPage(); void refreshJobs(); }
 function communityPage() { navigate('#community'); }
-function prepare() { if (draft) navigate('#prepare'); else home(); }
+function prepare() { navigate('#prepare'); }
 function resultPage(job) { active = mergeJob(job); navigate(`#job/${job.id}`); }
 function publishPage(job) { active = job; navigate(`#publish/${job.id}`); }
 function openJob(job) { active = mergeJob(job); navigate(`#job/${job.id}`); }
-function recreatePost(post) { if (!post?.productImage) return; draft = post.productImage; prepare(); toast('商品图已载入，选好模特即可开始创作'); }
+function recreatePost(post) { if (!post?.productImage) return; draft = post.productImage; resetTryonDraft(draft); prepare(); toast('商品图已载入，选好模特即可开始创作'); }
 function setScreen(value, showDock = false) {
   screen = value; dock.classList.toggle('contextual', !showDock);
   if (value !== 'home') stopHomeCarousel();
@@ -123,7 +124,6 @@ async function renderRoute() {
     setScreen('my', true); renderMy(); restore(); return;
   }
   if (parts[0] === 'prepare') {
-    if (!draft) { navigate('#home', true); toast('请重新选择商品图'); return; }
     renderPrepare(); restore(); return;
   }
   if (parts[0] === 'community') {
@@ -292,9 +292,10 @@ function updateView() {
   viewSignature = signature;
   if (screen === 'home') {
     const start = document.querySelector('#start-create');
-    start.querySelector('.home-action-copy').textContent = draft ? '商品图已准备好\n继续完成模特效果' : '上传商品图\n生成模特上身效果';
-    start.querySelector('.home-action-title').textContent = draft ? '继续创作' : '开拍';
-    start.onclick = () => draft ? prepare() : input.click();
+    const hasGarmentDraft = Boolean(draft || (typeof tryonPrimaryImages === 'function' && tryonPrimaryImages().length));
+    start.querySelector('.home-action-copy').textContent = hasGarmentDraft ? '商品图已准备好\n继续完成模特效果' : '上传商品图\n生成模特上身效果';
+    start.querySelector('.home-action-title').textContent = hasGarmentDraft ? '继续创作' : '开拍';
+    start.onclick = prepare;
     const pending = sortedJobs().find(isPending);
     document.querySelector('#active-task').innerHTML = pending ? `<button class="task-banner" data-job="${pending.id}"><span class="task-banner-icon"><span class="spinner small"></span></span><span class="task-banner-copy"><strong>${statusLabel(pending)}</strong><small>你的${escapeHtml(workflowJobName(pending))}正在创作，点此查看</small><span class="task-progress" aria-hidden="true"><span></span></span></span>${icon('arrow')}</button>` : '';
   } else {
@@ -342,7 +343,11 @@ function editProfile() {
   layer.querySelector('#nickname-input').focus();
 }
 function selectModel(value) {
-  model = value; try { localStorage.setItem('yipai-model', model); } catch {}
+  model = value === 'male' ? 'male' : 'female';
+  selectedModelId = null;
+  tryonDraftRevision++; pendingSubmission = null;
+  try { localStorage.setItem('yipai-model', model); localStorage.removeItem('yipai-selected-model-id'); } catch {}
+  if (screen === 'prepare') { renderTryonStudio(); return; }
   document.querySelectorAll('[data-model]').forEach(button => {
     const selected = button.dataset.model === model;
     button.classList.toggle('selected', selected); button.setAttribute('aria-pressed', String(selected));
@@ -356,27 +361,22 @@ function modelCards() {
   const selected = allModels.find(m => m.id === selectedModelId) || allModels[0];
   return `<div class="model-chip selected" role="button" tabindex="0" data-open-picker aria-pressed="true">${photo(selected.image, selected.name)}<span class="model-label">${escapeHtml(selected.name)}<span class="model-check">${icon('check')}</span></span></div><button class="text-button" data-change-model>更换模特</button>`;
 }
-function renderPrepare() {
-  setScreen('prepare');
-  app.innerHTML = `<section class="page detail-page">${subTop('准备开拍')}<div class="prepare-layout"><section class="product-panel"><div class="section-heading"><h2>商品原图</h2><button class="text-button" id="replace">换一张 ${icon('refresh')}</button></div>${photo(draft, '上传的商品图片', 'product-preview')}<p class="muted image-note">商品完整、细节清楚，展示效果更好。</p></section><section class="configuration-panel"><span class="eyebrow">下一步，让商品上身</span><h2>选择出镜模特</h2><p class="muted">选好模特，就可以开始创作。</p><div class="compact-models">${modelCards()}</div>${errorSlot}<div class="bottom-action"><button id="generate" class="primary">生成图片 ${icon('arrow')}</button><p class="helper">一次生成一张，完成后可对照原图查看</p></div></section></div></section>`;
-  bindHeader(); document.querySelector('#replace').onclick = () => input.click();
-  document.querySelector('#generate').onclick = () => {
-    const modelToUse = selectedModelId || model;
-    void generate(draft, modelToUse);
-  };
-  document.querySelectorAll('[data-model]').forEach(button => button.onclick = () => selectModel(button.dataset.model));
-  document.querySelector('[data-open-picker]')?.addEventListener('click', openModelPicker);
-  document.querySelector('[data-change-model]')?.addEventListener('click', openModelPicker);
-  watchImages();
-}
+function renderPrepare() { renderTryonStudio(); }
 function openModelPicker() {
   const picker = renderModelPicker();
   document.body.appendChild(picker);
 }
 function poseProgress(job) {
-  if (job?.workflowType !== 'pose_variation') return '';
-  const total = job.workflowConfig?.pose_count || 4;
-  return `已生成 ${Math.min(job.images?.length || 0, total)} / ${total} 张`;
+  if (job?.workflowType === 'pose_variation') {
+    const total = job.workflowConfig?.pose_count || 4;
+    return `已生成 ${Math.min(job.images?.length || 0, total)} / ${total} 张`;
+  }
+  if (job?.workflowType === 'tryon' && job.workflowConfig?.clothing_mode !== 'auto') {
+    const refs = (job.inputImages || []).filter(image=>image.role==='reference').length;
+    const total = Math.max(1,refs) * (job.workflowConfig?.output_count || 1);
+    return `已生成 ${Math.min(job.images?.length || 0,total)} / ${total} 张`;
+  }
+  return '';
 }
 function waiting() {
   setScreen('generating');
@@ -433,6 +433,8 @@ async function generate(source = draft, choice = model, workflow = {}) {
   }
   if (!source) return;
   const submissionRoute = currentRoute;
+  const gender = choice === 'male' ? 'male' : 'female';
+  const tryonRevision = workflow.draftRevision;
   submitting = true; busy = true;
   const button = document.querySelector('#generate') || document.querySelector('#regenerate') || document.querySelector('#retry');
   if (button) { button.disabled = true; button.textContent = '正在提交…'; }
@@ -441,23 +443,41 @@ async function generate(source = draft, choice = model, workflow = {}) {
     await sessionReady;
     const workflowType = workflow.workflowType || 'tryon';
     const workflowConfig = workflow.workflowConfig || null;
-    const submissionKey = JSON.stringify([source, choice, workflowType, workflowConfig]);
-    if (!pendingSubmission || pendingSubmission.key !== submissionKey) pendingSubmission = {source, model:choice, key:submissionKey, idempotencyKey:crypto.randomUUID()};
+    const inputImages = Array.isArray(workflow.inputImages) ? workflow.inputImages : null;
+    const modelId = workflow.modelId || null;
+    const submissionKey = JSON.stringify([source, gender, workflowType, workflowConfig, modelId, inputImages]);
+    if (!pendingSubmission || pendingSubmission.key !== submissionKey) pendingSubmission = {source, model:gender, key:submissionKey, idempotencyKey:crypto.randomUUID()};
     const image = await sourceData(source);
-    const payload = {image, model:choice, idempotencyKey:pendingSubmission.idempotencyKey};
-    if (workflowType !== 'tryon') Object.assign(payload, {workflowType, workflowConfig});
-    const data = await api('/api/jobs', {method:'POST', body:JSON.stringify(payload)});
+    const payload = {image, model:gender, idempotencyKey:pendingSubmission.idempotencyKey};
+    if (workflow.workflowType || workflowType !== 'tryon') payload.workflowType = workflowType;
+    if (workflowConfig) payload.workflowConfig = workflowConfig;
+    if (modelId) payload.modelId = modelId;
+    if (inputImages) payload.inputImages = await Promise.all(inputImages.map(async item => {
+      const inputImage = item.image || item.url;
+      if (!inputImage) throw new Error('有一张输入图片无法读取，请重新上传。');
+      const {url, ...descriptor} = item;
+      return {...descriptor, image:await sourceData(inputImage)};
+    }));
+    const requestBody = JSON.stringify(payload);
+    if (workflowType === 'tryon' && typeof payload.inputImages !== 'undefined') {
+      const requestBytes = typeof TextEncoder === 'function' ? new TextEncoder().encode(requestBody).length : unescape(encodeURIComponent(requestBody)).length;
+      if (requestBytes > 30 * 1024 * 1024) throw new Error('图片总请求体超过 30 MB，请减少图片数量或重新选择较小的图片。');
+    }
+    const data = await api('/api/jobs', {method:'POST', body:requestBody});
     const submittedJob = mergeJob(data.job);
     pendingSubmission = null;
-    if (draft === source) draft = null;
+    if (workflowType === 'tryon' && inputImages) {
+      if (currentRoute === submissionRoute && tryonRevision === tryonDraftRevision) { resetTryonDraft(); draft = null; }
+    } else if (draft === source) draft = null;
     submitting = false; busy = history.some(isPending);
     if (currentRoute === submissionRoute) { active = submittedJob; navigate(`#job/${submittedJob.id}`); }
     else { updateView(); toast('任务已提交，可在「我的」查看'); }
     schedulePoll();
   } catch (error) {
     submitting = false; busy = history.some(isPending);
+    if (currentRoute !== submissionRoute) { toast(error.message || '任务提交失败，请返回查看并重试'); return; }
     // Preserve a newer draft chosen while a previous submission was in flight.
-    if (!draft || draft === source) { draft = source; model = choice; }
+    if (draft === source || (!draft && tryonRevision === undefined)) { draft = source; model = gender; }
     if (screen === 'prepare') renderPrepare();
     else if (screen === 'result' && active) renderResult(active);
     else if (screen === 'failed' && active) failedPage(active);
@@ -469,29 +489,45 @@ function failedPage(job) {
   active = job; setScreen('failed');
   app.innerHTML = `<section class="page detail-page">${subTop('未生成成功', myPage)}<div class="state-panel">${photo(job.original, '生成失败的商品', 'task-product')}<span class="failure-icon">${icon('warning')}</span><h1>这次没生成成功</h1><p>${escapeHtml(job.error || '请稍后重试，商品原图已保留。')}</p>${errorSlot}<button class="primary" id="retry">重新生成 ${icon('refresh')}</button><button class="text-button" id="return-home">返回我的作品</button></div></section>`;
   bindHeader(myPage); document.querySelector('#return-home').onclick = myPage;
-  document.querySelector('#retry').onclick = () => { void generate(job.original, job.model, {workflowType:job.workflowType, workflowConfig:job.workflowConfig}); }; watchImages();
+  document.querySelector('#retry').onclick = () => { void generate(job.original, job.model, regenerationWorkflow(job)); }; watchImages();
+}
+function regenerationWorkflow(job) {
+  return {
+    workflowType:job.workflowType,
+    workflowConfig:job.workflowConfig,
+    inputImages:Array.isArray(job.inputImages) && job.inputImages.length ? job.inputImages : undefined
+  };
+}
+function jobInputLabel(job) {
+  if (job.workflowType === 'tryon') {
+    const role = job.inputImages?.find(image=>['upper','lower','single'].includes(image.role))?.role;
+    return ({upper:'上装原图',lower:'下装原图',single:'连体服装原图'})[role] || '商品原图';
+  }
+  return job.workflowType ? '输入图片' : '商品原图';
 }
 function renderResult(job) {
   setScreen('result');
   const outputTitle = workflowJobName(job);
   const outputMeta = job.workflowType && job.workflowType !== 'tryon' ? workflowJobName(job) : modelName(job.model);
-  const poseImages = job.workflowType === 'pose_variation' && Array.isArray(job.images) && job.images.length
+  const poseImages = ['pose_variation','tryon'].includes(job.workflowType) && Array.isArray(job.images) && job.images.length
     ? job.images.map(image => typeof image === 'string' ? image : image?.url).filter(Boolean)
     : [job.image].filter(Boolean);
   let selectedPoseIndex = 0;
-  const inputLabel = job.workflowType && job.workflowType !== 'tryon' ? '输入图片' : '商品原图';
+  const inputLabel = jobInputLabel(job);
   const previewNotice = job.previewOnly && job.workflowType === 'background_change'
     ? '<p class="preview-output-notice" role="status">这是一条旧的演示样例记录，未处理输入图片。点击重新生成可重新提交原图。</p>'
     : '';
-  const hasPoseGallery = job.workflowType === 'pose_variation' && poseImages.length > 1;
-  const poseGallery = hasPoseGallery ? `<div class="pose-gallery" aria-label="姿势裂变图片">
+  const hasPoseGallery = ['pose_variation','tryon'].includes(job.workflowType) && poseImages.length > 1;
+  const galleryLabel = job.workflowType === 'tryon' ? '虚拟试穿' : '姿势裂变';
+  const downloadLabel = job.workflowType === 'tryon' ? '试穿结果' : '姿势裂变';
+  const poseGallery = hasPoseGallery ? `<div class="pose-gallery" aria-label="${galleryLabel}图片">
     <p class="pose-gallery-count" aria-live="polite">第 <span id="pose-result-index">1</span> 张 / 共 ${poseImages.length} 张独立图片</p>
-    <div class="pose-gallery-thumbnails" role="group" aria-label="选择姿势图片">
-      ${poseImages.map((image, index) => `<button class="pose-gallery-thumb ${index === 0 ? 'selected' : ''}" type="button" data-pose-image="${index}" aria-label="查看第 ${index + 1} 张图片" aria-pressed="${index === 0}"><img src="${escapeHtml(image)}" alt="姿势裂变第 ${index + 1} 张" decoding="async"><span>${index + 1}</span></button>`).join('')}
+    <div class="pose-gallery-thumbnails" role="group" aria-label="选择${galleryLabel}图片">
+      ${poseImages.map((image, index) => `<button class="pose-gallery-thumb ${index === 0 ? 'selected' : ''}" type="button" data-pose-image="${index}" aria-label="查看第 ${index + 1} 张图片" aria-pressed="${index === 0}"><img src="${escapeHtml(image)}" alt="${galleryLabel}第 ${index + 1} 张" decoding="async"><span>${index + 1}</span></button>`).join('')}
     </div>
   </div>` : '';
-  const poseActions = hasPoseGallery ? `<button class="action-button" id="save-all">${icon('save')}<span>下载全部 ${poseImages.length} 张</span></button>` : '';
-  app.innerHTML = `<section class="page detail-page result-page">${subTop('你的新作品', myPage, true)}<div class="result-layout"><div class="result-main"><div class="result-toolbar"><div class="segmented" aria-label="图片对照"><button class="selected" id="effect-tab" aria-pressed="true">效果图</button><button id="original-tab" aria-pressed="false">${inputLabel}</button></div><button class="icon-button" id="zoom-result" aria-label="放大查看图片">${icon('zoom')}</button></div><div class="comparison-grid"><div class="result-image-column"><span class="desktop-image-label">${escapeHtml(outputTitle)}${hasPoseGallery ? ' · <span id="pose-result-label">1</span> / ' + poseImages.length : ''}</span>${poseGallery}<div id="result-primary" role="button" tabindex="0" aria-label="全屏查看效果图">${photo(poseImages[0], hasPoseGallery ? '姿势裂变第 1 张' : '带衣拍水印的模特展示图', 'result-art')}</div></div><div class="desktop-original"><span class="desktop-image-label">${inputLabel}</span><div role="button" tabindex="0" id="result-original" aria-label="全屏查看${inputLabel}">${photo(job.original, inputLabel, 'result-art')}</div></div></div></div><aside class="result-side"><div class="result-summary"><span class="eyebrow">完成这一次创作</span><h2>让细节，也经得起看。</h2><p>发布前，对照原图检查颜色、图案和商品结构。</p>${previewNotice}<span class="result-meta">${escapeHtml(outputMeta)} · ${escapeHtml(job.date)}</span></div>${errorSlot}<div class="result-actions ${hasPoseGallery ? 'pose-result-actions' : ''}"><button class="action-button" id="regenerate">${icon('refresh')}<span>重新生成</span></button><button class="action-button primary-action" id="save">${icon('save')}<span>保存当前图片</span></button><button class="action-button" id="share">${icon('share')}<span>分享转发</span></button>${poseActions}</div></aside></div></section>`;
+  const poseActions = hasPoseGallery ? `<button class="action-button" id="save-all">${icon('save')}<span>下载全部${downloadLabel} ${poseImages.length} 张</span></button>` : '';
+  app.innerHTML = `<section class="page detail-page result-page">${subTop('你的新作品', myPage, true)}<div class="result-layout"><div class="result-main"><div class="result-toolbar"><div class="segmented" aria-label="图片对照"><button class="selected" id="effect-tab" aria-pressed="true">效果图</button><button id="original-tab" aria-pressed="false">${inputLabel}</button></div><button class="icon-button" id="zoom-result" aria-label="放大查看图片">${icon('zoom')}</button></div><div class="comparison-grid"><div class="result-image-column"><span class="desktop-image-label">${escapeHtml(outputTitle)}${hasPoseGallery ? ' · <span id="pose-result-label">1</span> / ' + poseImages.length : ''}</span>${poseGallery}<div id="result-primary" role="button" tabindex="0" aria-label="全屏查看效果图">${photo(poseImages[0], hasPoseGallery ? `${galleryLabel}第 1 张` : '带衣拍水印的模特展示图', 'result-art')}</div></div><div class="desktop-original"><span class="desktop-image-label">${inputLabel}</span><div role="button" tabindex="0" id="result-original" aria-label="全屏查看${inputLabel}">${photo(job.original, inputLabel, 'result-art')}</div></div></div></div><aside class="result-side"><div class="result-summary"><span class="eyebrow">完成这一次创作</span><h2>让细节，也经得起看。</h2><p>发布前，对照原图检查颜色、图案和商品结构。</p>${previewNotice}<span class="result-meta">${escapeHtml(outputMeta)} · ${escapeHtml(job.date)}</span></div>${errorSlot}<div class="result-actions ${hasPoseGallery ? 'pose-result-actions' : ''}"><button class="action-button" id="regenerate">${icon('refresh')}<span>重新生成</span></button><button class="action-button primary-action" id="save">${icon('save')}<span>保存当前图片</span></button><button class="action-button" id="share">${icon('share')}<span>分享转发</span></button>${poseActions}</div></aside></div></section>`;
   bindHeader(myPage); let showingOriginal = false;
   const selectedResult = () => hasPoseGallery ? {...job, image: poseImages[selectedPoseIndex], imageIndex: selectedPoseIndex + 1} : job;
   const choose = original => {
@@ -502,7 +538,7 @@ function renderResult(job) {
     document.querySelector('#original-tab').setAttribute('aria-pressed', String(original));
     const primary = document.querySelector('#result-primary');
     primary.setAttribute('aria-label', `全屏查看${original ? inputLabel : '效果图'}`);
-    primary.innerHTML = photo(original ? job.original : poseImages[selectedPoseIndex], original ? inputLabel : hasPoseGallery ? `姿势裂变第 ${selectedPoseIndex + 1} 张` : '带衣拍水印的模特展示图', 'result-art'); watchImages(primary);
+    primary.innerHTML = photo(original ? job.original : poseImages[selectedPoseIndex], original ? inputLabel : hasPoseGallery ? `${galleryLabel}第 ${selectedPoseIndex + 1} 张` : '带衣拍水印的模特展示图', 'result-art'); watchImages(primary);
   };
   document.querySelector('#effect-tab').onclick = () => choose(false);
   document.querySelector('#original-tab').onclick = () => choose(true);
@@ -512,7 +548,7 @@ function renderResult(job) {
   document.querySelector('#result-primary').onkeydown = event => { if (['Enter',' '].includes(event.key)) { event.preventDefault(); view(); } };
   document.querySelector('#result-original').onclick = () => openViewer(job, true);
   document.querySelector('#result-original').onkeydown = event => { if (['Enter',' '].includes(event.key)) { event.preventDefault(); openViewer(job, true); } };
-  document.querySelector('#regenerate').onclick = () => void generate(job.original, job.model, {workflowType:job.workflowType, workflowConfig:job.workflowConfig});
+  document.querySelector('#regenerate').onclick = () => void generate(job.original, job.model, regenerationWorkflow(job));
   document.querySelector('#save').onclick = () => save(selectedResult());
   if (hasPoseGallery) {
     document.querySelectorAll('[data-pose-image]').forEach(button => button.onclick = () => {
@@ -529,7 +565,7 @@ function renderResult(job) {
     document.querySelector('#save-all').onclick = () => {
       const link = document.createElement('a');
       link.href = job.downloadAll || `/api/jobs/${job.id}/download.zip`;
-      link.download = `衣拍-${job.id}-全部姿势.zip`;
+      link.download = `衣拍-${job.id}-全部${galleryLabel}.zip`;
       document.body.appendChild(link); link.click(); link.remove();
       toast('已发起全部图片下载');
     };
@@ -629,7 +665,7 @@ input.onchange = async () => {
     canvas.width = Math.round(img.width * scale); canvas.height = Math.round(img.height * scale);
     if (Math.min(canvas.width, canvas.height) < 512) throw new Error('图片尺寸过小，请换一张清楚的图片');
     canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-    draft = canvas.toDataURL('image/jpeg', .85); pendingSubmission = null; prepare();
+    draft = canvas.toDataURL('image/jpeg', .85); resetTryonDraft(draft); pendingSubmission = null; prepare();
   } catch { if (version === uploadVersion) pageError('无法读取图片或尺寸不足，请换一张清楚的 JPG、PNG 或 WebP 图片'); }
 };
 document.querySelector('#create-tab').onclick = home;

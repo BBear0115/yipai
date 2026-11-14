@@ -5,22 +5,24 @@ const fs = require('node:fs');
 const path = require('node:path');
 const {webcrypto} = require('node:crypto');
 
-async function context() {
-  const location = {hash:''};
+async function context(initialHash = '') {
+  const location = {hash:initialHash};
   const listeners = {};
   const classList = {add(){},remove(){},toggle(){}};
   const element = {style:{},classList,setAttribute(){},addEventListener(){},querySelector(){return {...element};},querySelectorAll(){return [];},focus(){},appendChild(){},insertBefore(){},replaceWith(){},remove(){},click(){},getAttribute(){return '';},setAttribute(){},removeAttribute(){},children:[],innerHTML:'',textContent:'',dataset:{},inert:false};
   const window = {scrollTo(){},addEventListener(name,fn){listeners[name]=fn;},history:{pushState(_state,_title,hash){location.hash=hash;},replaceState(_state,_title,hash){location.hash=hash;}}};
   const document = {body:{classList},querySelector:()=>({...element}),querySelectorAll:()=>[],getElementById:()=>({...element}),addEventListener(name,fn){listeners[`document:${name}`]=fn;},createElement(tag){if(tag==='template')return {content:{firstElementChild:{...element}},set innerHTML(_value){}};return {...element};}};
   const sandbox = vm.createContext({
-    document,window,location,localStorage:{getItem(){},setItem(){}},crypto:webcrypto,
+    document,window,location,localStorage:{getItem(){},setItem(){},removeItem(){}},crypto:webcrypto,
     setTimeout(){return 1;},clearTimeout(){},setInterval(){return 1;},
     fetch:async()=>({ok:true,json:async()=>({ready:true,jobs:[],posts:[]})})
   });
   vm.runInContext('openBatchUpload=()=>{}',sandbox);
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../mockup/community.js'),'utf8'),sandbox);
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../mockup/studio.js'),'utf8'),sandbox);
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'../mockup/tryon.js'),'utf8'),sandbox);
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../mockup/app.js'),'utf8'),sandbox);
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'../mockup/models.js'),'utf8'),sandbox);
   await vm.runInContext('sessionReady',sandbox);
   vm.runInContext('waiting=()=>{};prepare=()=>{};toast=()=>{};pollJobs=async()=>{};',sandbox);
   return sandbox;
@@ -153,6 +155,13 @@ test('model library initializes only after app APIs and toast are available',()=
   assert.ok(html.indexOf('app.js')<html.indexOf('models.js'));
 });
 
+test('directly opening the empty try-on workspace renders before the model library loads',async()=>{
+  const ctx=await context('#prepare');
+  assert.equal(vm.runInContext('screen',ctx),'prepare');
+  assert.match(vm.runInContext('app.innerHTML',ctx),/服装细节参考/);
+  assert.equal(vm.runInContext('selectedModelId',ctx),null);
+});
+
 test('创意裂变 offers 4, 6, and 8 pose counts and only the two variation modes',async()=>{
   const ctx=await context();
   vm.runInContext("screen='variations';renderVariations()",ctx);
@@ -169,7 +178,7 @@ test('pose result displays each output separately and offers all-image download'
   const html=vm.runInContext('app.innerHTML',ctx);
   assert.equal((html.match(/data-pose-image=/g)||[]).length,4);
   assert.match(html,/第 <span id="pose-result-index">1<\/span> 张 \/ 共 4 张独立图片/);
-  assert.match(html,/下载全部 4 张/);
+  assert.match(html,/下载全部姿势裂变 4 张/);
   assert.match(html,/data-pose-image="3" aria-label="查看第 4 张图片"/);
   assert.doesNotMatch(html,/宫格/);
 });
@@ -330,6 +339,230 @@ test('submission completing after navigation preserves the new draft and current
   assert.equal(vm.runInContext('draft',ctx),'data:image/jpeg;base64,new');
   assert.equal(vm.runInContext('location.hash',ctx),'#community');
   assert.equal(vm.runInContext('busy',ctx),true);
+});
+
+test('try-on lower-only submission keeps gender separate from library model ID',async()=>{
+  const ctx=await context();
+  vm.runInContext(`
+    tryonDraftState={clothingMode:'multi',garments:{upper:null,lower:'data:image/jpeg;base64,lower',single:null},references:[],modelImage:null,detailsEnabled:false,details:{upper:[],lower:[],single:[]},outputCount:1,instruction:''};
+    selectedModelId='0123456789abcdef0123456789abcdef';
+    currentRoute='#prepare';screen='prepare';
+    calls=[];navigate=route=>{location.hash=route};
+    api=async(path,options)=>{calls.push({path,options});return {job:{id:'abcdef0123456789abcdef0123456789',status:'queued',created:new Date().toISOString()}}};
+  `,ctx);
+  const source=vm.runInContext('buildTryonWorkflow()',ctx);
+  assert.equal(vm.runInContext('tryonTotalOutputCount()',ctx),1);
+  ctx.workflowForTest=source;
+  await vm.runInContext("generate(workflowForTest.source,'male',workflowForTest)",ctx);
+  const body=JSON.parse(vm.runInContext('calls[0].options.body',ctx));
+  assert.equal(body.model,'male');
+  assert.equal(body.modelId,'0123456789abcdef0123456789abcdef');
+  assert.equal(body.workflowType,'tryon');
+  assert.deepEqual(body.workflowConfig,{clothing_mode:'multi',output_count:1,instruction:''});
+  assert.equal(body.image,'data:image/jpeg;base64,lower');
+  assert.deepEqual(body.inputImages.map(item=>item.role),['lower']);
+  assert.ok(!body.inputImages.some(item=>item.role==='model'));
+});
+
+test('try-on single garment and uploaded model photos submit as separate roles',async()=>{
+  const ctx=await context();
+  vm.runInContext(`
+    tryonDraftState={clothingMode:'single',garments:{upper:'data:image/jpeg;base64,inactive-upper',lower:null,single:'data:image/jpeg;base64,dress'},references:[],modelImage:'data:image/jpeg;base64,face',detailsEnabled:false,details:{upper:[],lower:[],single:[]},outputCount:1,instruction:''};
+    selectedModelId='';currentRoute='#prepare';screen='prepare';calls=[];navigate=route=>{location.hash=route};
+    api=async(path,options)=>{calls.push({path,options});return {job:{id:'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',status:'queued',created:new Date().toISOString()}}};
+  `,ctx);
+  const workflow=vm.runInContext('buildTryonWorkflow()',ctx);
+  ctx.workflowForTest=workflow;
+  await vm.runInContext("generate(workflowForTest.source,'female',workflowForTest)",ctx);
+  const body=JSON.parse(vm.runInContext('calls[0].options.body',ctx));
+  assert.equal(body.workflowConfig.clothing_mode,'single');
+  assert.deepEqual(body.inputImages.map(item=>item.role),['single','model']);
+  assert.equal(body.modelId,undefined);
+  assert.equal(body.image,'data:image/jpeg;base64,dress');
+});
+
+test('empty prepare route opens the garment workbench and home create goes directly to it',async()=>{
+  const ctx=await context();
+  vm.runInContext("location.hash='#prepare';currentRoute='';renderRoute()",ctx);
+  assert.equal(vm.runInContext('location.hash',ctx),'#prepare');
+  assert.match(vm.runInContext('app.innerHTML',ctx),/上装 \/ 下装/);
+  assert.match(vm.runInContext('app.innerHTML',ctx),/连体 \/ 全身/);
+  assert.match(vm.runInContext('app.innerHTML',ctx),/上传上装/);
+  assert.match(vm.runInContext('app.innerHTML',ctx),/上传下装/);
+  assert.equal(vm.runInContext("tryonDraftState.clothingMode",ctx),'multi');
+});
+
+test('home continue preserves role-uploaded garment and references',async()=>{
+  const ctx=await context();
+  vm.runInContext("screen='prepare';currentRoute='#prepare';routeVersion=1;normalizeTryonFile=async file=>file.image",ctx);
+  await vm.runInContext("addTryonFiles('garment','lower',[{image:'data:image/jpeg;base64,lower'}])",ctx);
+  await vm.runInContext("addTryonFiles('reference',null,[{image:'data:image/jpeg;base64,reference'}])",ctx);
+  vm.runInContext("screen='home';currentRoute='#home';draft=null;prepare=()=>navigate('#prepare');prepare()",ctx);
+  assert.equal(vm.runInContext('tryonDraftState.garments.lower',ctx),'data:image/jpeg;base64,lower');
+  assert.equal(vm.runInContext('tryonDraftState.references[0]',ctx),'data:image/jpeg;base64,reference');
+  assert.equal(vm.runInContext('location.hash',ctx),'#prepare');
+});
+
+test('selecting a library model updates gender separately and persists the library ID',async()=>{
+  const ctx=await context();
+  vm.runInContext("allModels=[{id:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',name:'专属男模',gender:'male',image:'/model'}];selectedModelId=null;tryonDraftState=freshTryonDraft()",ctx);
+  vm.runInContext("selectLibraryModel('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')",ctx);
+  assert.equal(vm.runInContext('model',ctx),'male');
+  assert.equal(vm.runInContext('selectedModelId',ctx),'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+  assert.equal(vm.runInContext('tryonDraftState.modelImage',ctx),null);
+  assert.equal(vm.runInContext('buildTryonWorkflow().modelId',ctx),'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+});
+
+test('starting a new try-on draft clears references, details, and instruction',async()=>{
+  const ctx=await context();
+  vm.runInContext(`tryonDraftState={clothingMode:'single',garments:{upper:null,lower:null,single:'data:image/jpeg;base64,old'},references:['data:image/jpeg;base64,ref'],modelImage:null,detailsEnabled:true,details:{upper:[],lower:[],single:['data:image/jpeg;base64,detail']},outputCount:2,instruction:'old instruction'};resetTryonDraft()`,ctx);
+  const state=vm.runInContext('tryonDraftState',ctx);
+  assert.equal(state.clothingMode,'multi');
+  assert.equal(state.garments.single,null);
+  assert.deepEqual(Array.from(state.references),[]);
+  assert.deepEqual(Array.from(state.details.single),[]);
+  assert.equal(state.detailsEnabled,false);
+  assert.equal(state.instruction,'');
+  assert.equal(state.outputCount,1);
+});
+
+test('try-on expands reference count by per-reference output count and preserves separate refs',async()=>{
+  const ctx=await context();
+  vm.runInContext(`
+    tryonDraftState={clothingMode:'multi',garments:{upper:'data:image/jpeg;base64,upper',lower:null,single:null},references:['data:image/jpeg;base64,ref1','data:image/jpeg;base64,ref2'],modelImage:null,detailsEnabled:false,details:{upper:[],lower:[],single:[]},outputCount:2,instruction:'春季通勤'};
+  `,ctx);
+  const output=vm.runInContext('buildTryonWorkflow()',ctx);
+  assert.equal(vm.runInContext('tryonTotalOutputCount()',ctx),4);
+  assert.deepEqual(Array.from(output.inputImages,item=>item.role),['upper','reference','reference']);
+  assert.deepEqual(Array.from(output.inputImages.filter(item=>item.role==='reference'),item=>item.image),['data:image/jpeg;base64,ref1','data:image/jpeg;base64,ref2']);
+  assert.deepEqual(JSON.parse(JSON.stringify(output.workflowConfig)),{clothing_mode:'multi',output_count:2,instruction:'春季通勤'});
+});
+
+test('try-on details are bound to their garment and excluded while the detail switch is off',async()=>{
+  const ctx=await context();
+  vm.runInContext(`
+    tryonDraftState={clothingMode:'multi',garments:{upper:'data:image/jpeg;base64,upper',lower:'data:image/jpeg;base64,lower',single:null},references:[],modelImage:null,detailsEnabled:false,details:{upper:['data:image/jpeg;base64,collar'],lower:['data:image/jpeg;base64,pocket'],single:[]},outputCount:1,instruction:''};
+  `,ctx);
+  assert.deepEqual(Array.from(vm.runInContext('buildTryonWorkflow().inputImages',ctx),item=>item.role),['upper','lower']);
+  vm.runInContext('tryonDraftState.detailsEnabled=true',ctx);
+  const images=vm.runInContext('buildTryonWorkflow().inputImages',ctx);
+  assert.deepEqual(Array.from(images,item=>item.role),['upper','lower','detail','detail']);
+  assert.deepEqual(Array.from(images.filter(item=>item.role==='detail'),item=>item.garmentRole),['upper','lower']);
+});
+
+test('try-on garment mode changes retain both drafts and submit only the active mode',async()=>{
+  const ctx=await context();
+  vm.runInContext(`tryonDraftState={clothingMode:'multi',garments:{upper:'data:image/jpeg;base64,upper',lower:'data:image/jpeg;base64,lower',single:'data:image/jpeg;base64,single'},references:[],modelImage:null,detailsEnabled:true,details:{upper:['data:image/jpeg;base64,upper-detail'],lower:[],single:['data:image/jpeg;base64,single-detail']},outputCount:1,instruction:''}`,ctx);
+  assert.deepEqual(Array.from(vm.runInContext('buildTryonWorkflow().inputImages',ctx),item=>item.role),['upper','lower','detail']);
+  vm.runInContext("tryonDraftState.clothingMode='single'",ctx);
+  let images=vm.runInContext('buildTryonWorkflow().inputImages',ctx);
+  assert.deepEqual(Array.from(images,item=>item.role),['single','detail']);
+  assert.equal(vm.runInContext('tryonDraftState.garments.upper',ctx),'data:image/jpeg;base64,upper');
+  vm.runInContext("tryonDraftState.clothingMode='multi'",ctx);
+  images=vm.runInContext('buildTryonWorkflow().inputImages',ctx);
+  assert.deepEqual(Array.from(images,item=>item.role),['upper','lower','detail']);
+});
+
+test('try-on idempotency includes every input and retries reuse the same key',async()=>{
+  const ctx=await context();
+  vm.runInContext(`screen='home';keys=[];api=async(_path,options)=>{keys.push(JSON.parse(options.body).idempotencyKey);throw Error('network')}`,ctx);
+  const first={workflowType:'tryon',workflowConfig:{clothing_mode:'multi',output_count:1,instruction:''},inputImages:[{role:'lower',image:'data:image/jpeg;base64,lower'},{role:'reference',image:'data:image/jpeg;base64,ref'}]};
+  ctx.workflowForTest=first;
+  await vm.runInContext("generate('data:image/jpeg;base64,lower','female',workflowForTest)",ctx);
+  await vm.runInContext("generate('data:image/jpeg;base64,lower','female',workflowForTest)",ctx);
+  const changed={...first,inputImages:[...first.inputImages,{role:'detail',garmentRole:'lower',image:'data:image/jpeg;base64,detail'}]};
+  ctx.workflowForTest=changed;
+  await vm.runInContext("generate('data:image/jpeg;base64,lower','female',workflowForTest)",ctx);
+  assert.equal(vm.runInContext('keys[0]===keys[1]',ctx),true);
+  assert.equal(vm.runInContext('keys[1]!==keys[2]',ctx),true);
+});
+
+test('slow try-on upload does not overwrite a newer draft',async()=>{
+  const ctx=await context();
+  vm.runInContext(`screen='prepare';currentRoute='#prepare';routeVersion=3;normalizeTryonFile=async()=>new Promise(resolve=>finishUpload=resolve)`,ctx);
+  const pending=vm.runInContext("addTryonFiles('garment','upper',[{name:'old'}],tryonDraftRevision,currentRoute,routeVersion)",ctx);
+  await new Promise(resolve=>setImmediate(resolve));
+  vm.runInContext("resetTryonDraft('data:image/jpeg;base64,new-draft')",ctx);
+  vm.runInContext("finishUpload('data:image/jpeg;base64,late-old')",ctx);
+  assert.equal(await pending,false);
+  assert.equal(vm.runInContext('tryonDraftState.garments.upper',ctx),'data:image/jpeg;base64,new-draft');
+});
+
+test('try-on upload failure appears beside its control and preserves the existing image',async()=>{
+  const ctx=await context();
+  vm.runInContext(`
+    screen='prepare';currentRoute='#prepare';routeVersion=3;
+    tryonDraftState.garments.upper='data:image/jpeg;base64,existing';
+    uploadFeedback={hidden:true,textContent:'',classList:{toggle(){}},setAttribute(){}};
+    submitFeedback={hidden:true,textContent:''};
+    app.querySelector=selector=>selector==='[data-tryon-feedback="garment:upper"]'?uploadFeedback:submitFeedback;
+    testPicker={files:[{name:'small.png'}],addEventListener(){},click(){},remove(){}};
+    document.body.appendChild=()=>{};document.createElement=()=>testPicker;
+    toast=message=>lastToast=message;
+    normalizeTryonFile=async()=>{throw Error('这张图片为 200 × 240 像素，商品图宽和高都需至少 256 像素。')};
+    openTryonFilePicker('garment','upper');
+  `,ctx);
+  await vm.runInContext('testPicker.onchange()',ctx);
+  assert.equal(vm.runInContext('uploadFeedback.hidden',ctx),false);
+  assert.match(vm.runInContext('uploadFeedback.textContent',ctx),/200 × 240/);
+  assert.match(vm.runInContext('lastToast',ctx),/256/);
+  assert.equal(vm.runInContext('tryonDraftState.garments.upper',ctx),'data:image/jpeg;base64,existing');
+});
+
+test('try-on size validation reports the actual PNG dimensions',async()=>{
+  const ctx=await context();
+  vm.runInContext(`URL={createObjectURL:()=>'/small.png',revokeObjectURL(){}};loadImage=async()=>({width:200,height:240})`,ctx);
+  await assert.rejects(
+    vm.runInContext("normalizeTryonFile({name:'small.png',size:1024},'garment')",ctx),
+    /200 × 240.*256/
+  );
+});
+
+test('try-on accepts small product PNGs without enlarging their pixels',async()=>{
+  const ctx=await context();
+  vm.runInContext(`
+    URL={createObjectURL:file=>file,revokeObjectURL(){}};
+    loadImage=async file=>({width:file.width,height:file.height});
+    testCanvas={getContext:()=>({drawImage(){}}),toDataURL:()=> 'data:image/jpeg;base64,small'};
+    document.createElement=()=>testCanvas;
+  `,ctx);
+  for (const [width,height] of [[330,502],[480,444],[454,454]]) {
+    ctx.fileForTest={name:'product.png',type:'image/png',size:1024,width,height};
+    const image=await vm.runInContext("normalizeTryonFile(fileForTest,'garment')",ctx);
+    assert.equal(image,'data:image/jpeg;base64,small');
+    assert.equal(vm.runInContext('testCanvas.width',ctx),width);
+    assert.equal(vm.runInContext('testCanvas.height',ctx),height);
+  }
+});
+
+test('try-on regeneration resends every saved input URL and workflow setting',async()=>{
+  const ctx=await context();
+  vm.runInContext(`
+    sourceData=async url=>` + "`data:image/jpeg;base64,${url.split('/').pop()}`" + `;
+    calls=[];currentRoute='#job/abcdef0123456789abcdef0123456789';screen='result';navigate=route=>{location.hash=route};
+    api=async(path,options)=>{calls.push({path,options});return {job:{id:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',status:'queued',created:new Date().toISOString()}}};
+  `,ctx);
+  const job={id:'abcdef0123456789abcdef0123456789',original:'/api/jobs/x/input',model:'female',workflowType:'tryon',workflowConfig:{clothing_mode:'multi',output_count:2,instruction:'keep outfit'},inputImages:[{role:'lower',url:'/api/jobs/x/input-1'},{role:'reference',url:'/api/jobs/x/input-2'},{role:'detail',url:'/api/jobs/x/input-3',garmentRole:'lower'}]};
+  ctx.jobForTest=job;
+  const workflow=vm.runInContext('regenerationWorkflow(jobForTest)',ctx);
+  ctx.workflowForTest=workflow;
+  await vm.runInContext("generate('/api/jobs/x/input','female',workflowForTest)",ctx);
+  const body=JSON.parse(vm.runInContext('calls[0].options.body',ctx));
+  assert.deepEqual(body.workflowConfig,{clothing_mode:'multi',output_count:2,instruction:'keep outfit'});
+  assert.deepEqual(body.inputImages.map(item=>item.role),['lower','reference','detail']);
+  assert.equal(body.inputImages[2].garmentRole,'lower');
+  assert.deepEqual(body.inputImages.map(item=>item.image),['data:image/jpeg;base64,input-1','data:image/jpeg;base64,input-2','data:image/jpeg;base64,input-3']);
+});
+
+test('try-on gallery is labeled as try-on rather than pose variation',async()=>{
+  const ctx=await context();
+  vm.runInContext(`renderResult({id:'job',workflowType:'tryon',workflowConfig:{clothing_mode:'multi',output_count:2},inputImages:[{role:'lower',url:'/lower'}],images:['/out-1','/out-2'],image:'/out-1',original:'/lower',model:'female',date:'today',status:'succeeded'})`,ctx);
+  const html=vm.runInContext('app.innerHTML',ctx);
+  assert.match(html,/虚拟试穿图片/);
+  assert.match(html,/虚拟试穿第 1 张/);
+  assert.match(html,/选择虚拟试穿图片/);
+  assert.doesNotMatch(html,/姿势裂变/);
+  assert.match(html,/下装原图/);
 });
 
  test('创意裂变 and history routes coexist with the current home navigation',async()=>{
