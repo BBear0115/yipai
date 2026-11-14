@@ -1,0 +1,7 @@
+Extend the icon family from our previous generated twelve-icon sprite sheet with ONE additional icon only: PORTFOLIO / MY WORKS / 作品集.
+
+Render just ONE isolated icon on a clean pure white 1024x1024 canvas. Do not repeat the sprite sheet or any other icon. No text, no label, no grid lines, no shadows.
+
+Design: a simple gallery/portfolio symbol made of FOUR identical empty rounded square outlines in a neat 2-by-2 arrangement. The four squares are clearly separate, equal sized, and have equal horizontal and vertical gaps. Every square has soft rounded corners. Black outlines only, white interiors. This is an app navigation glyph for a user's collection of created images. Do not add a sparkle, photo landscape, bookmark, person, camera, folder tab or fifth shape. Four tiles make it distinct from our creative-variations icon, which has only three tiles and a sparkle.
+
+Match the EXACT visual language of the previously generated icons: pure black monoline stroke, friendly softly squared geometry, generous round corners, uniform stroke width, minimal detail and perfect balance. Overall icon footprint approximately 520x520 pixels, centered at (512,512). Stroke approximately 40 pixels, similar to the existing icon family's stroke-to-footprint ratio. Equal gaps approximately 60 pixels. The white background will be removed later. The result should read clearly at 24 to 28 pixels.

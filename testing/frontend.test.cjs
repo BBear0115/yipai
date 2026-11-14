@@ -122,13 +122,15 @@ test('create page keeps the immersive hero and the creation entries',async()=>{
   assert.doesNotMatch(html,/把每一件单品|衣拍灵感|开始创作|官方穿搭灵感|看看示例/);
 });
 
-test('my page holds the profile and the creation history',async()=>{
+test('my page is a profile header with stats, a settings entry and works / saved tabs',async()=>{
   const ctx=await context();
   vm.runInContext("jobsLoaded=true;screen='my';renderMy()",ctx);
   const html=vm.runInContext('app.innerHTML',ctx);
-  assert.match(html,/创作历史/);
   assert.match(html,/edit-profile/);
-  assert.doesNotMatch(html,/home-hero|效果示例/);
+  assert.match(html,/id="my-settings"/);
+  assert.deepEqual(Array.from(vm.runInContext('[...app.innerHTML.matchAll(/data-my-tab="(\\w+)"/g)].map(match=>match[1])',ctx)),['works','saved']);
+  assert.match(html,/作品[\s\S]*已发布[\s\S]*获赞/);
+  assert.doesNotMatch(html,/home-hero|效果示例|tasks-link|batch-upload/);
 });
 
 test('dock routes 创作 to the create page and 我的 to its own page',async()=>{
@@ -139,6 +141,19 @@ test('dock routes 创作 to the create page and 我的 to its own page',async()=
   vm.runInContext("location.hash='#home'",ctx);
   await vm.runInContext('renderRoute()',ctx);
   assert.equal(vm.runInContext('screen',ctx),'home');
+});
+
+test('开拍 offers camera and library choices, each opening its own file input',async()=>{
+  const ctx=await context();
+  vm.runInContext(`
+    picked=[];input.click=()=>picked.push('library');cameraInput.click=()=>picked.push('camera');
+    buttons={};layer={querySelectorAll:()=>['camera','library'].map(pick=>buttons[pick]={dataset:{pick}})};
+    openOverlay=html=>{sheetHtml=html;return layer};
+    pickImage();buttons.camera.onclick();buttons.library.onclick();
+  `,ctx);
+  assert.match(vm.runInContext('sheetHtml',ctx),/拍照[\s\S]*相册 \/ 文件/);
+  assert.deepEqual(Array.from(vm.runInContext('picked',ctx)),['camera','library']);
+  assert.match(fs.readFileSync(path.join(__dirname,'../mockup/index.html'),'utf8'),/id="camera-input"[^>]*capture="environment"/);
 });
 
 test('recreating an official example loads its product photo into the existing prepare flow',async()=>{
@@ -188,7 +203,7 @@ test('pose thumbnail selection controls the large image, viewer, sharing, and sa
     renderResult({id:'poses',model:'female',status:'succeeded',image:'/pose-1',images:['/pose-1','/pose-2','/pose-3','/pose-4'],original:'/input',workflowType:'pose_variation'});
     poseButtons[1].onclick();
     controls['#save'].onclick();
-    controls['#zoom-result'].onclick();
+    controls['#result-primary'].onclick();
     controls['#share'].onclick();
   `,ctx);
   assert.match(vm.runInContext("controls['#result-primary'].innerHTML",ctx),/src="\/pose-2"/);
@@ -341,5 +356,5 @@ test('submission completing after navigation preserves the new draft and current
   vm.runInContext("location.hash='#history'",ctx);
   await vm.runInContext('renderRoute()',ctx);
   assert.equal(vm.runInContext('screen',ctx),'my');
-  assert.match(vm.runInContext('app.innerHTML',ctx),/创作历史/);
+  assert.match(vm.runInContext('app.innerHTML',ctx),/data-my-tab="works"/);
 });

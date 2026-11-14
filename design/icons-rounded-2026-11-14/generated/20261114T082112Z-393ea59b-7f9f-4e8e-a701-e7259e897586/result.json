@@ -1,0 +1,19 @@
+{
+  "request_id": "393ea59b-7f9f-4e8e-a701-e7259e897586",
+  "response_id": "resp_cb1ff91273df49b288d1a8d9",
+  "parameters": {
+    "model": "gpt-image-2.5-sunburst",
+    "size": "1024x1024",
+    "quality": "high",
+    "background": "auto",
+    "output_format": "png",
+    "n": 1,
+    "stream": false
+  },
+  "image_count": 1,
+  "images": [
+    "/Users/dxm/Documents/临时/yipai/design/icons-rounded-2026-11-14/generated/20261114T082112Z-393ea59b-7f9f-4e8e-a701-e7259e897586/image-01.png"
+  ],
+  "conversation_file": "/Users/dxm/Documents/临时/yipai/design/icons-rounded-2026-11-14/generated/20261114T082112Z-393ea59b-7f9f-4e8e-a701-e7259e897586/conversation.json",
+  "result_file": "/Users/dxm/Documents/临时/yipai/design/icons-rounded-2026-11-14/generated/20261114T082112Z-393ea59b-7f9f-4e8e-a701-e7259e897586/result.json"
+}

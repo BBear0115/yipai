@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <meta name="theme-color" content="#101216" />
   <title>衣拍</title>
-  <link rel="stylesheet" href="styles.css?v=20261114-variations" />
+  <link rel="stylesheet" href="styles.css?v=20261114-rounded-icons" />
   <link rel="stylesheet" href="studio.css?v=20261114-variations" />
 </head>
 <body>
@@ -16,24 +16,26 @@
     <nav id="dock" class="dock" aria-label="主导航">
       <div class="dock-tabs">
         <button id="create-tab" class="dock-item active" type="button" aria-label="创作" aria-current="page">
-          <svg viewBox="0 0 28 28" aria-hidden="true"><path d="M4 8.5h4l1.7-2.5h8.6L20 8.5h4v13H4z"/><circle cx="14" cy="15" r="4.2"/></svg><span class="dock-label">创作</span>
+          <i class="asset-icon icon-nav-create" aria-hidden="true"></i><span class="dock-label">创作</span>
         </button>
         <button id="community-tab" class="dock-item" type="button" aria-label="社区">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg><span class="dock-label">社区</span>
+          <i class="asset-icon icon-nav-community" aria-hidden="true"></i><span class="dock-label">社区</span>
         </button>
         <button id="my-tab" class="dock-item" type="button" aria-label="我的">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M4.5 21c.3-4.5 3-7 7.5-7s7.2 2.5 7.5 7"/></svg><span class="dock-label">我的</span>
+          <i class="asset-icon icon-nav-profile" aria-hidden="true"></i><span class="dock-label">我的</span>
         </button>
       </div>
     </nav>
     <input id="file-input" type="file" accept="image/*,.heic,.heif" hidden />
+    <input id="camera-input" type="file" accept="image/*" capture="environment" hidden />
     <div id="toast" class="toast" role="status"></div>
   </div>
-  <script src="community.js?v=20261113-5"></script>
+  <script src="community.js?v=20261114-rounded-icons"></script>
   <script src="batch.js?v=20261113-5"></script>
   <script src="tasks.js?v=20261113-5"></script>
   <script src="studio.js?v=20261114-variations"></script>
-  <script src="app.js?v=20261114-variations"></script>
+  <script src="refine-frame.js?v=20261114-refine"></script>
+  <script src="app.js?v=20261114-rounded-icons"></script>
   <script src="models.js?v=20261113-5"></script>
 </body>
 </html>

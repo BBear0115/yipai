@@ -1,0 +1,67 @@
+[
+  {
+    "file": "nav-create.png",
+    "label": "创作",
+    "group": "底部导航"
+  },
+  {
+    "file": "nav-community.png",
+    "label": "社区",
+    "group": "底部导航"
+  },
+  {
+    "file": "nav-profile.png",
+    "label": "我的",
+    "group": "底部导航"
+  },
+  {
+    "file": "feature-shoot.png",
+    "label": "开拍",
+    "group": "创作功能"
+  },
+  {
+    "file": "feature-remake.png",
+    "label": "拍同款",
+    "group": "创作功能"
+  },
+  {
+    "file": "feature-variations.png",
+    "label": "创意裂变",
+    "group": "创作功能"
+  },
+  {
+    "file": "community-like.png",
+    "label": "点赞",
+    "group": "社区操作"
+  },
+  {
+    "file": "community-bookmark.png",
+    "label": "收藏",
+    "group": "社区操作"
+  },
+  {
+    "file": "community-share.png",
+    "label": "分享",
+    "group": "社区操作"
+  },
+  {
+    "file": "community-save.png",
+    "label": "保存",
+    "group": "社区操作"
+  },
+  {
+    "file": "profile-settings.png",
+    "label": "设置",
+    "group": "我的页面"
+  },
+  {
+    "file": "profile-bookmarks.png",
+    "label": "收藏",
+    "group": "我的页面"
+  },
+  {
+    "file": "profile-portfolio.png",
+    "label": "作品集",
+    "group": "我的页面"
+  }
+]
