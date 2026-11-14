@@ -20,6 +20,10 @@
         "8021"
       ],
       "port": 8021
+    },
+    {
+      "name": "online-demo",
+      "url": "https://pixel-diffusion.com"
     }
   ]
 }

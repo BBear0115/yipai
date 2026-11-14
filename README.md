@@ -11,9 +11,10 @@
 - 结果检查：商品原图切换、全屏放大、下载和系统分享。
 - 社区：主动发布效果图、商品原图和心得；支持撤回。
 - 可靠性：匿名会话隔离、幂等提交、单用户单进行中任务和服务端水印。
+- 姿势裂变：选择 4 / 6 / 8 个姿势，分别生成独立图片；结果页逐张查看、保存，也支持打包下载。旧版宫格任务会在服务启动时拆为单图，原宫格文件保留。
 - 响应式界面：手机底部导航，平板与桌面使用宽工作区。
 
-## 快速预览（无需生图密钥）
+## 运行创作工作台（真实生成）
 
 需要 Python 3.9+；建议使用独立虚拟环境。
 
@@ -23,20 +24,22 @@ cd yipai
 python3 -m venv .venv
 source .venv/bin/activate
 python3 -m pip install -r requirements.txt
-python3 testing/preview_server.py --port 8018
+cp .env.example .env.local
+# 在 .env.local 中填写 IMAGE2_GATEWAY_API_KEY
+YIPAI_PORT=8018 python3 -m backend.server
 ```
 
-打开 <http://127.0.0.1:8018/>。预览使用已有测试图片模拟排队和生成，不调用图片服务、不产生生图费用，数据保存在临时目录并在退出后清理。可增加 `--empty` 查看空工作台，或 `--large-text` 检查 200% 根字号布局。
+打开 <http://127.0.0.1:8018/#workflows>。该服务会处理上传原图并调用真实图片生成接口；背景替换保留原图主体，商品图不会自动添加模特。历史与图片保存在 `backend/data/`，重启后保留。
 
-## 启用真实图片生成
+## 界面演示（无需生图密钥）
 
 ```sh
-cp .env.example .env.local
-# 在 .env.local 中填写自己的 IMAGE2_GATEWAY_API_KEY 和 IMAGE2_UUAP_ID
-python3 backend/server.py
+python3 testing/preview_server.py --port 8019
 ```
 
-打开 <http://127.0.0.1:8000/>。真实生成通过代码配置的 Image2 网关调用 `gpt-image-2`，需要相应接入权限，并可能产生供应商费用；普通静态服务器无法运行生成接口。密钥只保存在服务端，环境变量优先于 `.env.local`。
+打开 <http://127.0.0.1:8019/>。演示使用固定样例模拟排队与生成，不处理上传图片、不调用图片服务。页面会显示演示模式提示；数据存入临时目录并在退出后清理。可增加 `--empty` 查看空工作台，或 `--large-text` 检查 200% 根字号布局。
+
+真实生成通过 Image2 网关调用 `gpt-image-2.5-flare`，需要相应接入权限，并可能产生供应商费用；普通静态服务器无法运行生成接口。密钥只保存在服务端，环境变量优先于 `.env.local`。如网关要求接入方标识，可额外设置 `IMAGE2_UUAP_ID`。
 
 默认数据目录为 `backend/data/`；可用 `YIPAI_DATA_DIR` 指定其他目录，用 `YIPAI_PORT` 修改端口，用 `IMAGE2_ENV_FILE` 指定配置文件。真实服务在 macOS 上使用苹方字体合成中文水印；其他系统需要按源码配置可用的中文字体并验证水印。
 

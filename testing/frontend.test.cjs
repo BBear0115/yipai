@@ -17,8 +17,10 @@ async function context() {
     setTimeout(){return 1;},clearTimeout(){},setInterval(){return 1;},
     fetch:async()=>({ok:true,json:async()=>({ready:true,jobs:[],posts:[]})})
   });
+  vm.runInContext('openBatchUpload=()=>{}',sandbox);
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../mockup/community.js'),'utf8'),sandbox);
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../mockup/app.js'),'utf8'),sandbox);
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'../mockup/workflows.js'),'utf8'),sandbox);
   await vm.runInContext('sessionReady',sandbox);
   vm.runInContext('waiting=()=>{};prepare=()=>{};toast=()=>{};pollJobs=async()=>{};',sandbox);
   return sandbox;
@@ -87,7 +89,7 @@ test('navigation writes task routes to the URL hash',async()=>{
   assert.equal(vm.runInContext('location.hash',ctx),'#job/0123456789abcdef0123456789abcdef');
 });
 
-test('create page keeps the immersive hero and only the two creation entries',async()=>{
+test('create page keeps the immersive hero and the creation entries',async()=>{
   const ctx=await context();
   vm.runInContext("jobsLoaded=true;screen='home';renderCreate()",ctx);
   const html=vm.runInContext('app.innerHTML',ctx);
@@ -126,6 +128,131 @@ test('recreating an official example loads its product photo into the existing p
   vm.runInContext("prepared=false;prepare=()=>{prepared=true};toast=()=>{};recreatePost({productImage:'assets/community/floral-dress-product.jpg'})",ctx);
   assert.equal(vm.runInContext('draft',ctx),'assets/community/floral-dress-product.jpg');
   assert.equal(vm.runInContext('prepared',ctx),true);
+});
+
+test('model library initializes only after app APIs and toast are available',()=>{
+  const html=fs.readFileSync(path.join(__dirname,'../mockup/index.html'),'utf8');
+  assert.ok(html.indexOf('app.js')<html.indexOf('models.js'));
+});
+
+test('pose workflow offers 4, 6, and 8 image counts',async()=>{
+  const ctx=await context();
+  vm.runInContext('renderPoseVariationPage()',ctx);
+  const html=vm.runInContext('app.innerHTML',ctx);
+  assert.deepEqual(Array.from(vm.runInContext('[...app.innerHTML.matchAll(/data-count="(\\d+)"/g)].map(match=>Number(match[1]))',ctx)),[4,6,8]);
+  assert.match(html,/每个姿势单独生成一张完整图片/);
+  assert.doesNotMatch(html,/宫格/);
+});
+
+test('pose result displays each output separately and offers all-image download',async()=>{
+  const ctx=await context();
+  vm.runInContext("renderResult({id:'poses',model:'female',status:'succeeded',created:new Date().toISOString(),image:'/pose-1',images:['/pose-1','/pose-2','/pose-3','/pose-4'],original:'/input',workflowType:'pose_variation',workflowConfig:{pose_count:4}})",ctx);
+  const html=vm.runInContext('app.innerHTML',ctx);
+  assert.equal((html.match(/data-pose-image=/g)||[]).length,4);
+  assert.match(html,/第 <span id="pose-result-index">1<\/span> 张 \/ 共 4 张独立图片/);
+  assert.match(html,/下载全部 4 张/);
+  assert.match(html,/data-pose-image="3" aria-label="查看第 4 张图片"/);
+  assert.doesNotMatch(html,/宫格/);
+});
+
+test('pose thumbnail selection controls the large image, viewer, sharing, and saved output',async()=>{
+  const ctx=await context();
+  vm.runInContext(`
+    controls={};
+    originalQuery=document.querySelector;
+    document.querySelector=selector=>controls[selector]||=(originalQuery(selector));
+    poseButtons=Array.from({length:4},(_,index)=>({dataset:{poseImage:String(index)},classList:{toggle(){}},setAttribute(name,value){this[name]=value}}));
+    document.querySelectorAll=selector=>selector==='[data-pose-image]'?poseButtons:[];
+    save=result=>{saved=result};
+    openViewer=result=>{viewed=result};
+    shareOptions=result=>{shared=result};
+    renderResult({id:'poses',model:'female',status:'succeeded',image:'/pose-1',images:['/pose-1','/pose-2','/pose-3','/pose-4'],original:'/input',workflowType:'pose_variation'});
+    poseButtons[1].onclick();
+    controls['#save'].onclick();
+    controls['#zoom-result'].onclick();
+    controls['#share'].onclick();
+  `,ctx);
+  assert.match(vm.runInContext("controls['#result-primary'].innerHTML",ctx),/src="\/pose-2"/);
+  assert.equal(vm.runInContext('saved.image',ctx),'/pose-2');
+  assert.equal(vm.runInContext('saved.imageIndex',ctx),2);
+  assert.equal(vm.runInContext('viewed.image',ctx),'/pose-2');
+  assert.equal(vm.runInContext('shared.image',ctx),'/pose-2');
+  assert.equal(vm.runInContext("poseButtons[1]['aria-pressed']",ctx),'true');
+  assert.equal(vm.runInContext("controls['#pose-result-index'].textContent",ctx),'2');
+});
+
+test('pose progress advances as individual image files complete',async()=>{
+  const ctx=await context();
+  const code=fs.readFileSync(path.join(__dirname,'../mockup/app.js'),'utf8');
+  vm.runInContext(code.slice(code.indexOf('function waiting()'),code.indexOf('function renderJob(')),ctx);
+  vm.runInContext(code.slice(code.indexOf('async function pollJobs()'),code.indexOf('function loadImage(')),ctx);
+  vm.runInContext(`
+    controls={};
+    originalQuery=document.querySelector;
+    document.querySelector=selector=>controls[selector]||=(originalQuery(selector));
+    active={id:'poses',model:'female',status:'running',workflowType:'pose_variation',workflowConfig:{pose_count:4},images:['/pose-1']};
+    history=[active];
+    waiting();
+    api=async()=>({jobs:[{...active,images:['/pose-1','/pose-2','/pose-3']}]});
+  `,ctx);
+  assert.match(vm.runInContext('app.innerHTML',ctx),/已生成 1 \/ 4 张/);
+  await vm.runInContext('pollJobs()',ctx);
+  assert.equal(vm.runInContext("controls['#task-progress'].textContent",ctx),'已生成 3 / 4 张');
+  assert.equal(vm.runInContext("controls['#task-progress'].hidden",ctx),false);
+});
+
+test('background workflow exposes the six supported scene IDs',async()=>{
+  const ctx=await context();
+  assert.deepEqual(Array.from(vm.runInContext('sceneTypes.map(scene=>scene.id)',ctx)),['white','studio_gray','outdoor_street','indoor_minimal','beach','cafe']);
+  vm.runInContext('renderBackgroundChangePage()',ctx);
+  assert.match(vm.runInContext('app.innerHTML',ctx),/accept="image\/jpeg,image\/png,image\/webp"/);
+});
+
+test('background result keeps the chosen scene visible and labels mock output honestly',async()=>{
+  const ctx=await context();
+  vm.runInContext("renderResult({id:'bg',model:'female',status:'succeeded',created:new Date().toISOString(),image:'/result',original:'/input',workflowType:'background_change',workflowConfig:{scene_type:'beach'},previewOnly:true})",ctx);
+  const html=vm.runInContext('app.innerHTML',ctx);
+  assert.match(html,/背景替换 · 海边/);
+  assert.match(html,/旧的演示样例记录/);
+});
+
+test('real background output has no sample notice',async()=>{
+  const ctx=await context();
+  vm.runInContext("renderResult({id:'live-bg',model:'female',status:'succeeded',created:new Date().toISOString(),image:'/result',original:'/input',workflowType:'background_change',workflowConfig:{scene_type:'cafe'},previewOnly:false})",ctx);
+  const html=vm.runInContext('app.innerHTML',ctx);
+  assert.match(html,/背景替换 · 咖啡馆/);
+  assert.doesNotMatch(html,/preview-output-notice/);
+});
+
+test('recent task image retry controls are not nested inside the task link',async()=>{
+  const ctx=await context();
+  vm.runInContext("history=[{id:'recent',model:'female',status:'succeeded',created:new Date().toISOString(),image:'/api/jobs/recent/result'}]",ctx);
+  const html=vm.runInContext('renderWorkflowHistory()',ctx);
+  assert.match(html,/<article class="workflow-recent-item">/);
+  assert.equal((html.match(/<button\b/g)||[]).length,2);
+  assert.match(html,/<button class="workflow-recent-open"[^>]+data-recent-job="recent"/);
+});
+
+test('workflow submission sends typed config with an idempotency key and opens its returned job',async()=>{
+  const ctx=await context();
+  vm.runInContext(`
+    currentRoute='#workflow/pose-variation';
+    navigate=route=>{location.hash=route};
+    workflowUpload='data:image/jpeg;base64,test';
+    calls=[];
+    api=async(path,options)=>{
+      calls.push({path,options});
+      return {job:{id:'0123456789abcdef0123456789abcdef',status:'queued',created:'2026-11-11T00:00:00Z'}};
+    };
+  `,ctx);
+  await vm.runInContext("submitWorkflow('pose_variation',{pose_count:6})",ctx);
+  const body=JSON.parse(vm.runInContext('calls[0].options.body',ctx));
+  assert.equal(vm.runInContext('calls[0].path',ctx),'/api/jobs');
+  assert.equal(vm.runInContext('calls[0].options.method',ctx),'POST');
+  assert.equal(body.workflowType,'pose_variation');
+  assert.deepEqual(body.workflowConfig,{pose_count:6});
+  assert.ok(typeof body.idempotencyKey==='string'&&body.idempotencyKey.length>0);
+  assert.equal(vm.runInContext('location.hash',ctx),'#job/0123456789abcdef0123456789abcdef');
 });
 
 test('refreshing a task route reads the existing task and never posts generation',async()=>{
@@ -179,4 +306,16 @@ test('submission completing after navigation preserves the new draft and current
   assert.equal(vm.runInContext('draft',ctx),'data:image/jpeg;base64,new');
   assert.equal(vm.runInContext('location.hash',ctx),'#community');
   assert.equal(vm.runInContext('busy',ctx),true);
+});
+
+ test('studio and history routes coexist with the current home navigation',async()=>{
+  const ctx=await context();
+  vm.runInContext("renderStudio=(mode)=>{studioMode=mode || 'tryon'};location.hash='#create/background_change'",ctx);
+  await vm.runInContext('renderRoute()',ctx);
+  assert.equal(vm.runInContext('screen',ctx),'studio');
+  assert.equal(vm.runInContext('studioMode',ctx),'background_change');
+  vm.runInContext("location.hash='#history'",ctx);
+  await vm.runInContext('renderRoute()',ctx);
+  assert.equal(vm.runInContext('screen',ctx),'my');
+  assert.match(vm.runInContext('app.innerHTML',ctx),/创作历史/);
 });
