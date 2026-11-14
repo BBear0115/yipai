@@ -4,6 +4,12 @@
     {
       "name": "online-demo",
       "url": "https://pixel-diffusion.com"
+    },
+    {
+      "name": "preview",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["testing/preview_server.py", "--port", "8019"],
+      "port": 8019
     }
   ]
 }

@@ -1,8 +1,8 @@
 // Workflow creation studio for Yipai.
 
 const workflows = [
-  { id: 'pose-variation', name: '姿势裂变', description: '一张上身照，生成 4 / 6 / 8 姿势宫格', icon: 'pose', route: '#workflow/pose-variation' },
-  { id: 'background-change', name: '背景替换', description: '保留人物与服装，切换六种拍摄场景', icon: 'background', route: '#workflow/background-change' }
+  { id: 'pose-variation', name: '姿势裂变', description: '一张上身照，生成 4 / 6 / 8 张独立姿势图', icon: 'pose', route: '#workflow/pose-variation' },
+  { id: 'background-change', name: '背景替换', description: '保留原图主体，切换六种拍摄场景', icon: 'background', route: '#workflow/background-change' }
 ];
 
 const workflowNames = {
@@ -138,11 +138,12 @@ function workflowPageMarkup(type) {
   const title = item.name;
   const description = isPose
     ? '从一张模特上身图，生成多姿势商业大片。'
-    : '保留人物与服装细节，只替换拍摄背景。';
-  const uploadLabel = isPose ? '上传模特上身照' : '上传需要换背景的上身照';
+    : '保留原图中的商品与人物，只替换拍摄背景。';
+  const uploadLabel = isPose ? '上传模特上身照' : '上传需要换背景的原图';
+  const uploadHint = isPose ? '建议上传清晰的竖版上身图，人物与服装主体完整。' : '支持商品图和模特上身照；无人商品图不会新增模特。';
   const options = isPose ? `
     <div class="workflow-section">
-      <div class="workflow-section-title"><div><h2>生成数量</h2><p>一张图输出为对应数量的宫格画面。</p></div><span class="workflow-step">02</span></div>
+      <div class="workflow-section-title"><div><h2>生成数量</h2><p>每个姿势单独生成一张完整图片。</p></div><span class="workflow-step">02</span></div>
       <div class="pose-count-options">${[4, 6, 8].map(count => `<button class="pose-count-option ${selectedPoseCount === count ? 'selected' : ''}" type="button" data-count="${count}" aria-pressed="${selectedPoseCount === count}" ${workflowSubmitting ? 'disabled' : ''}><strong>${count}</strong><span>个姿势</span></button>`).join('')}</div>
     </div>` : `
     <div class="workflow-section">
@@ -159,9 +160,9 @@ function workflowPageMarkup(type) {
         <div class="workflow-config-heading"><span class="eyebrow">创作配置</span><h1>${escapeHtml(title)}</h1><p>${escapeHtml(description)}</p></div>
         <div class="workflow-form">
           <section class="workflow-section">
-            <div class="workflow-section-title"><div><h2>${escapeHtml(uploadLabel)}</h2><p>建议上传清晰的竖版上身图，人物与服装主体完整。</p></div><span class="workflow-step">01</span></div>
+            <div class="workflow-section-title"><div><h2>${escapeHtml(uploadLabel)}</h2><p>${escapeHtml(uploadHint)}</p></div><span class="workflow-step">01</span></div>
             <div class="workflow-upload-area ${workflowUpload ? 'has-image' : ''}">
-              ${workflowUpload ? `<div class="workflow-upload-thumb">${photo(workflowUpload, uploadLabel, '', true)}<button type="button" class="text-button" id="workflow-reupload" ${workflowSubmitting ? 'disabled' : ''}>换一张 ${icon('refresh')}</button></div>` : `<button class="workflow-dropzone" type="button" id="workflow-upload-btn" ${workflowSubmitting ? 'disabled' : ''}>${icon('image')}<strong>选择一张上身效果图</strong><small>JPG、PNG 或 WebP，最大 20 MB</small><span class="secondary">浏览图片 ${icon('plus')}</span></button>`}
+              ${workflowUpload ? `<div class="workflow-upload-thumb">${photo(workflowUpload, uploadLabel, '', true)}<button type="button" class="text-button" id="workflow-reupload" ${workflowSubmitting ? 'disabled' : ''}>换一张 ${icon('refresh')}</button></div>` : `<button class="workflow-dropzone" type="button" id="workflow-upload-btn" ${workflowSubmitting ? 'disabled' : ''}>${icon('image')}<strong>${isPose ? '选择一张上身效果图' : '选择商品图或模特照片'}</strong><small>JPG、PNG 或 WebP，最大 20 MB</small><span class="secondary">浏览图片 ${icon('plus')}</span></button>`}
               <input id="workflow-local-file" type="file" accept="image/jpeg,image/png,image/webp" hidden />
             </div>
           </section>
@@ -169,15 +170,15 @@ function workflowPageMarkup(type) {
           <div class="workflow-form-footnote"><span>${icon('warning')}</span><p>生成结果可能改变细节，请在使用前核对服装颜色、版型与图案。</p></div>
           <div class="workflow-submit-block">
             <button class="primary" id="submit-workflow" type="button" ${!workflowUpload || workflowSubmitting ? 'disabled' : ''}>${workflowSubmitting ? '正在提交…' : '开始生成'} ${icon('arrow')}</button>
-            <p class="helper">${isPose ? `输出一张 ${selectedPoseCount} 姿势宫格图` : '输出一张替换背景效果图'} · 生成结果将保存在创作历史</p>
+            <p class="helper">${isPose ? `输出 ${selectedPoseCount} 张独立姿势图` : '输出一张替换背景效果图'} · 生成结果将保存在创作历史</p>
           </div>
         </div>
       </section>
       <section class="workflow-preview">
         <div class="workflow-preview-heading"><div><span class="eyebrow">效果预览</span><h2>${workflowUpload ? '输入图片' : '待上传图片'}</h2></div><span class="workflow-preview-badge">${workflowUpload ? '已就绪' : '等待上传'}</span></div>
         <div class="workflow-preview-stage ${workflowUpload ? 'has-image' : ''}">${workflowUpload ? photo(workflowUpload, '创作输入图片', 'workflow-main-preview') : `<div class="workflow-preview-empty">${icon('image')}<strong>上传后预览创作素材</strong><p>${escapeHtml(uploadLabel)}会显示在这里。你可以先检查图片，再调整生成选项。</p></div>`}</div>
-        ${workflowUpload ? `<div class="workflow-preview-caption"><span>${icon('check')}</span><span><strong>素材已准备</strong><small>这张图片将作为人物和服装参考。</small></span></div>` : ''}
-        <div class="workflow-preview-note"><strong>${isPose ? '姿势裂变' : `背景替换 · ${sceneTypes.find(scene => scene.id === selectedSceneType)?.name || '白底'}`}</strong><p>${isPose ? '同一人物呈现不同姿势，一张结果图内以宫格展示。' : '人物、服装、姿势和原构图保持一致，只改变背景与环境光线。'}</p></div>
+        ${workflowUpload ? `<div class="workflow-preview-caption"><span>${icon('check')}</span><span><strong>素材已准备</strong><small>这张图片将作为商品与主体参考。</small></span></div>` : ''}
+        <div class="workflow-preview-note"><strong>${isPose ? '姿势裂变' : `背景替换 · ${sceneTypes.find(scene => scene.id === selectedSceneType)?.name || '白底'}`}</strong><p>${isPose ? `同一人物呈现 ${selectedPoseCount} 种姿势，每种姿势分别生成完整图片。` : '保留原图主体、服装细节和构图；无人商品图保持无人，只替换背景与环境光线。'}</p></div>
       </section>
     </div>
     ${errorSlot}

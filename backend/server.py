@@ -14,7 +14,9 @@ import re
 import secrets
 import shutil
 import sqlite3
+import sys
 import threading
+import zipfile
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from urllib.parse import urlsplit
@@ -22,13 +24,16 @@ from uuid import uuid4
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps, UnidentifiedImageError
 
-from backend.workflows.background_change import background_reference_url, build_background_change_prompt
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from backend.workflows.background_change import build_background_change_prompt
 from backend.workflows.pose_variation import build_pose_variation_prompt
 from backend.workflows.retouch import build_product_retouch_prompt, build_material_enhancement_prompt
 from backend.workflows.fusion import build_outfit_fusion_prompt, build_product_set_prompt
 from backend.workflows.translation import build_image_translation_prompt
 
-ROOT = Path(__file__).resolve().parent.parent
 STATIC = ROOT / 'mockup'
 DATA = Path(os.environ.get('YIPAI_DATA_DIR', str(ROOT / 'backend' / 'data')))
 DB = DATA / 'jobs.sqlite3'
@@ -84,6 +89,8 @@ def init_db():
             db.execute('ALTER TABLE jobs ADD COLUMN source_job_id TEXT')
         if 'input_images' not in columns:
             db.execute('ALTER TABLE jobs ADD COLUMN input_images TEXT')
+        if 'preview_only' not in columns:
+            db.execute('ALTER TABLE jobs ADD COLUMN preview_only INTEGER NOT NULL DEFAULT 0')
 
         # Create workflow_types table
         db.execute('''CREATE TABLE IF NOT EXISTS workflow_types (
@@ -130,6 +137,46 @@ def init_db():
             updated TEXT NOT NULL, completed TEXT)''')
         db.execute('CREATE INDEX IF NOT EXISTS task_queue_visitor_created ON task_queue(visitor, created DESC)')
         db.execute("UPDATE jobs SET status='failed', error='服务已重启，请重新生成', updated=? WHERE status IN ('queued','running')", (now(),))
+
+
+def migrate_pose_results():
+    """Split already-generated pose sheets so old jobs also expose separate photos."""
+    with connect() as db:
+        rows = db.execute("SELECT id, workflow_config FROM jobs WHERE workflow_type='pose_variation' AND status='succeeded'").fetchall()
+    for row in rows:
+        try:
+            count = json.loads(row['workflow_config'] or '{}').get('pose_count', 4)
+            if count not in (4, 6, 8):
+                continue
+            destinations = [data_path(row['id'], f'result-{index}') for index in range(1, count + 1)]
+            if all(path.is_file() for path in destinations):
+                continue
+            source = data_path(row['id'], 'result')
+            if not source.is_file():
+                continue
+            columns, rows_count = (2, 2) if count == 4 else (2, 3) if count == 6 else (3, 3)
+            with Image.open(source) as image:
+                image = image.convert('RGB')
+                for index, destination in enumerate(destinations):
+                    column, row_index = index % columns, index // columns
+                    left, right = round(column * image.width / columns), round((column + 1) * image.width / columns)
+                    top, bottom = round(row_index * image.height / rows_count), round((row_index + 1) * image.height / rows_count)
+                    tile = image.crop((left, top, right, bottom))
+                    if column:
+                        tile = tile.crop((3, 0, tile.width, tile.height))
+                    if column < columns - 1:
+                        tile = tile.crop((0, 0, tile.width - 3, tile.height))
+                    if row_index:
+                        tile = tile.crop((0, 3, tile.width, tile.height))
+                    if row_index < rows_count - 1:
+                        tile = tile.crop((0, 0, tile.width, tile.height - 3))
+                    encoded = BytesIO()
+                    tile.save(encoded, 'JPEG', quality=92)
+                    temporary = destination.with_suffix('.tmp')
+                    temporary.write_bytes(watermark(encoded.getvalue()))
+                    temporary.replace(destination)
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            print(f'Pose result migration failed job={row["id"]}')
 
 
 def data_path(job_id: str, kind: str) -> Path:
@@ -262,6 +309,28 @@ def update_job(job_id: str, **fields):
         db.execute('UPDATE jobs SET ' + ', '.join(f'{name}=?' for name in names) + ' WHERE id=?', [fields[name] for name in names] + [job_id])
 
 
+def request_image(prompt_text: str, images: list[str], size: str, api_key: str,
+                  uuap_id: str | None, request_id: str) -> bytes:
+    body = {
+        'model': 'gpt-image-2.5-flare',
+        'input': [{'role': 'user', 'content': [
+            {'type': 'input_text', 'text': prompt_text},
+            *[{'type': 'input_image', 'image_url': image} for image in images],
+        ]}],
+        'size': size, 'quality': 'high',
+    }
+    headers = {'Authorization': api_key, 'Content-Type': 'application/json',
+               'request-id': request_id}
+    if uuap_id:
+        headers['uuap-id'] = uuap_id
+    request = Request(GATEWAY, data=json.dumps(body).encode('utf-8'), headers=headers, method='POST')
+    with urlopen(request, timeout=300) as response:
+        response_raw = response.read(MAX_OUTPUT + 1)
+    if len(response_raw) > MAX_OUTPUT:
+        raise RuntimeError('图片服务响应过大')
+    return watermark(extract_output(json.loads(response_raw)))
+
+
 def generate(job_id: str, model: str, workflow_type: str = 'tryon', workflow_config: dict | None = None):
     with SLOTS:
         request_id = str(uuid4())
@@ -277,16 +346,25 @@ def generate(job_id: str, model: str, workflow_type: str = 'tryon', workflow_con
                 if pose_count not in (4, 6, 8):
                     pose_count = 4
 
-                prompt_text = build_pose_variation_prompt(pose_count)
                 images = [image_data_url(data_path(job_id, 'input').read_bytes())]
-                size = '1536x1536' if pose_count == 4 else '1536x2048'
+                for index in range(pose_count):
+                    prompt_text = build_pose_variation_prompt(pose_count, index)
+                    result = request_image(prompt_text, images, '1024x1536', api_key, uuap_id, f'{request_id}-{index + 1}')
+                    destination = data_path(job_id, f'result-{index + 1}')
+                    temporary = destination.with_suffix('.tmp')
+                    temporary.write_bytes(result)
+                    temporary.replace(destination)
+                    if index == 0:
+                        shutil.copyfile(destination, data_path(job_id, 'result'))
+                    update_job(job_id)
+                    print(f'Image2 request={request_id} pose={index + 1}/{pose_count} status=success')
+                update_job(job_id, status='succeeded')
+                return
             elif workflow_type == 'background_change':
                 scene_type = (workflow_config or {}).get('scene_type', 'white')
                 prompt_text = build_background_change_prompt(scene_type)
                 images = [image_data_url(data_path(job_id, 'input').read_bytes())]
-                reference_url = background_reference_url(scene_type)
-                if reference_url:
-                    images.append(reference_url)
+                # Scene thumbnails contain people; never send them as edit inputs.
                 size = '1024x1536'
             elif workflow_type == 'product_retouch':
                 mode = (workflow_config or {}).get('mode', 'faithful-retouch')
@@ -338,24 +416,7 @@ def generate(job_id: str, model: str, workflow_type: str = 'tryon', workflow_con
                           'data:image/png;base64,' + base64.b64encode(model_file.read_bytes()).decode('ascii')]
                 size = '1024x1536'
 
-            body = {
-                'model': 'gpt-image-2.5-flare',
-                'input': [{'role': 'user', 'content': [
-                    {'type': 'input_text', 'text': prompt_text},
-                    *[{'type': 'input_image', 'image_url': image} for image in images],
-                ]}],
-                'size': size, 'quality': 'high',
-            }
-            headers = {'Authorization': api_key, 'Content-Type': 'application/json',
-                       'request-id': request_id}
-            if uuap_id:
-                headers['uuap-id'] = uuap_id
-            request = Request(GATEWAY, data=json.dumps(body).encode('utf-8'), headers=headers, method='POST')
-            with urlopen(request, timeout=300) as response:
-                response_raw = response.read(MAX_OUTPUT + 1)
-            if len(response_raw) > MAX_OUTPUT:
-                raise RuntimeError('图片服务响应过大')
-            result = watermark(extract_output(json.loads(response_raw)))
+            result = request_image(prompt_text, images, size, api_key, uuap_id, request_id)
             destination = data_path(job_id, 'result')
             temporary = destination.with_suffix('.tmp')
             temporary.write_bytes(result)
@@ -381,11 +442,12 @@ def public_job(row):
         'created': row['created'], 'error': row['error'],
         'original': f'/api/jobs/{job_id}/input',
         'image': f'/api/jobs/{job_id}/result' if row['status'] == 'succeeded' else None,
+        'previewOnly': bool(row['preview_only']) if 'preview_only' in row.keys() else False,
     }
     # Add workflow fields if they exist
     if 'workflow_type' in row.keys():
         result['workflowType'] = row['workflow_type']
-    if 'workflow_config' in row.keys() and row['workflow_config']:
+    if 'workflow_config' in row.keys():
         try:
             result['workflowConfig'] = json.loads(row['workflow_config']) if row['workflow_config'] else None
         except (json.JSONDecodeError, TypeError):
@@ -397,10 +459,17 @@ def public_job(row):
             result['inputImages'] = json.loads(row['input_images']) if row['input_images'] else None
         except (json.JSONDecodeError, TypeError):
             result['inputImages'] = None
+    if result.get('workflowType') == 'pose_variation':
+        result['images'] = [f'/api/jobs/{job_id}/result-{index}' for index in range(1, 9)
+                            if data_path(job_id, f'result-{index}').is_file()]
+        if result['images'] and row['status'] == 'succeeded':
+            result['image'] = result['images'][0]
     return result
 
 
 class Handler(SimpleHTTPRequestHandler):
+    generation_mode = 'live'
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(STATIC), **kwargs)
 
@@ -422,11 +491,13 @@ class Handler(SimpleHTTPRequestHandler):
             self.new_cookie = None
         return hashlib.sha256(value.encode()).hexdigest()
 
-    def headers_out(self, status, content_type, size):
+    def headers_out(self, status, content_type, size, extra_headers=None):
         self.send_response(status)
         self.send_header('Content-Type', content_type)
         self.send_header('Content-Length', str(size))
         self.send_header('Cache-Control', 'no-store')
+        for name, value in (extra_headers or {}).items():
+            self.send_header(name, value)
         if getattr(self, 'new_cookie', None):
             self.send_header('Set-Cookie', f'yipai_session={self.new_cookie}; HttpOnly; SameSite=Lax; Path=/; Max-Age=2592000')
         self.end_headers()
@@ -440,7 +511,7 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path == '/api/session':
             self.session()
             key, uid = credentials()
-            return self.json_out(200, {'ready': bool(key)})
+            return self.json_out(200, {'ready': bool(key), 'generationMode': self.generation_mode})
         if self.path == '/api/tasks':
             visitor = self.session()
             with connect() as db:
@@ -526,7 +597,7 @@ class Handler(SimpleHTTPRequestHandler):
             raw = path.read_bytes()
             self.headers_out(200, 'image/jpeg', len(raw))
             return self.wfile.write(raw)
-        match = re.fullmatch(r'/api/jobs/([a-f0-9]{32})(?:/(input|result))?', self.path)
+        match = re.fullmatch(r'/api/jobs/([a-f0-9]{32})(?:/(input|result|result-[1-8]|download\.zip))?', self.path)
         if match:
             visitor = self.session()
             job_id, kind = match.groups()
@@ -536,8 +607,19 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.json_out(404, {'error': '作品不存在'})
             if not kind:
                 return self.json_out(200, {'job': public_job(row)})
-            if kind == 'result' and row['status'] != 'succeeded':
+            if kind != 'input' and row['status'] != 'succeeded':
                 return self.json_out(404, {'error': '图片尚未生成'})
+            if kind == 'download.zip':
+                images = public_job(row).get('images', [])
+                if not images:
+                    return self.json_out(404, {'error': '没有可下载的图片'})
+                archive = BytesIO()
+                with zipfile.ZipFile(archive, 'w', zipfile.ZIP_STORED) as bundle:
+                    for index, image in enumerate(images, 1):
+                        bundle.write(data_path(job_id, image.rsplit('/', 1)[-1]), f'yipai-pose-{index}.jpg')
+                raw = archive.getvalue()
+                self.headers_out(200, 'application/zip', len(raw), {'Content-Disposition': f'attachment; filename="yipai-{job_id}.zip"'})
+                return self.wfile.write(raw)
             path = data_path(job_id, kind)
             if not path.is_file():
                 return self.json_out(404, {'error': '图片不存在'})
@@ -591,6 +673,8 @@ class Handler(SimpleHTTPRequestHandler):
             if workflow_type == 'pose_variation':
                 if workflow_config and not isinstance(workflow_config, dict):
                     raise ValueError('工作流配置无效')
+                if (workflow_config or {}).get('pose_count', 4) not in (4, 6, 8):
+                    raise ValueError('姿势数量必须是 4、6 或 8')
                 model = model or 'female'
             elif workflow_type == 'background_change':
                 if workflow_config and not isinstance(workflow_config, dict):
@@ -668,8 +752,8 @@ class Handler(SimpleHTTPRequestHandler):
                 count = db.execute("SELECT COUNT(*) FROM jobs WHERE visitor=? AND status IN ('queued','running')", (visitor,)).fetchone()[0]
                 if count >= 10:
                     return self.json_out(429, {'error': f'排队任务已达上限（{count}/10），请等待完成后再提交', 'queueCount': count})
-                cursor = db.execute('INSERT OR IGNORE INTO jobs (id,visitor,idem,model,status,created,updated,workflow_type,workflow_config) VALUES (?,?,?,?,?,?,?,?,?)',
-                           (job_id, visitor, idem, model, 'queued', timestamp, timestamp, workflow_type, json.dumps(workflow_config) if workflow_config else None))
+                cursor = db.execute('INSERT OR IGNORE INTO jobs (id,visitor,idem,model,status,created,updated,workflow_type,workflow_config,preview_only) VALUES (?,?,?,?,?,?,?,?,?,?)',
+                           (job_id, visitor, idem, model, 'queued', timestamp, timestamp, workflow_type, json.dumps(workflow_config) if workflow_config else None, self.generation_mode == 'demo'))
                 if cursor.rowcount == 0:
                     previous = db.execute('SELECT * FROM jobs WHERE visitor=? AND idem=?', (visitor, idem)).fetchone()
                     count = db.execute("SELECT COUNT(*) FROM jobs WHERE visitor=? AND status IN ('queued','running')", (visitor,)).fetchone()[0]
@@ -681,7 +765,7 @@ class Handler(SimpleHTTPRequestHandler):
                 update_job(job_id, status='failed', error='图片保存失败，请重试')
                 return self.json_out(500, {'error': '图片保存失败，请重试'})
             threading.Thread(target=generate, args=(job_id, model, workflow_type, workflow_config), daemon=True).start()
-            return self.json_out(202, {'job': public_job({'id': job_id, 'model': model, 'status': 'queued', 'created': timestamp, 'error': None}), 'queueCount': count})
+            return self.json_out(202, {'job': public_job({'id': job_id, 'model': model, 'status': 'queued', 'created': timestamp, 'error': None, 'workflow_type': workflow_type, 'workflow_config': json.dumps(workflow_config) if workflow_config else None, 'preview_only': self.generation_mode == 'demo'}), 'queueCount': count})
         except (ValueError, json.JSONDecodeError) as exc:
             return self.json_out(400, {'error': str(exc)})
         except Exception as exc:
@@ -813,13 +897,14 @@ class Handler(SimpleHTTPRequestHandler):
             if row['status'] in ('queued', 'running'):
                 return self.json_out(409, {'error': '图片生成中，暂时无法删除'})
             db.execute('DELETE FROM jobs WHERE id=? AND visitor=?', (job_id, visitor))
-        for kind in ('input', 'result'):
+        for kind in ('input', 'result', *(f'result-{index}' for index in range(1, 9))):
             data_path(job_id, kind).unlink(missing_ok=True)
         return self.json_out(200, {'deleted': True})
 
 
 if __name__ == '__main__':
     init_db()
+    migrate_pose_results()
     port = int(os.environ.get('YIPAI_PORT', '8000'))
     print(f'衣拍服务启动：http://127.0.0.1:{port}', flush=True)
     ThreadingHTTPServer(('127.0.0.1', port), Handler).serve_forever()

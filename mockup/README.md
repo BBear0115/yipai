@@ -10,10 +10,10 @@
 
 ```sh
 python3 -m pip install -r requirements.txt
-python3 backend/server.py
+YIPAI_PORT=8018 python3 -m backend.server
 ```
 
-打开 `http://localhost:8000/`。不要再用 `python3 -m http.server`：静态服务器没有生成接口。
+打开 `http://127.0.0.1:8018/`。不要再用 `python3 -m http.server`：静态服务器没有生成接口。
 
 在项目根目录 `.env.local` 设置服务端 API Key（文件已被 Git 忽略）：
 
@@ -60,7 +60,7 @@ node --test testing/frontend.test.cjs
 
 自动化测试使用隔离临时数据库和模拟网关，不产生模型费用。真实服装生成与手机端流程测试结果见 [2026 年 11 月 10 日测试报告](../testing/2026-11-10/测试报告.md)；真实测试会产生模型调用。
 
-无费用的交互预览可运行 `python3 testing/preview_server.py --port 8018`，会显示记录图片和模拟排队/生成状态，数据存入临时目录。增加 `--empty` 查看空工作台；增加 `--large-text` 可验证 200% 根字号。预览服务不会访问图像生成服务。
+无费用的界面演示可运行 `python3 testing/preview_server.py --port 8019`，会显示固定样例和模拟排队/生成状态，数据存入临时目录。增加 `--empty` 查看空工作台；增加 `--large-text` 可验证 200% 根字号。演示不会处理上传图片，也不会访问图像生成服务；真实生成使用 8018 工作台服务。
 
 ## 当前边界
 

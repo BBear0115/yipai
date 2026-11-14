@@ -8,6 +8,7 @@ import tempfile
 import threading
 import time
 import unittest
+import zipfile
 from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import build_opener, HTTPCookieProcessor, Request
@@ -106,6 +107,22 @@ class BackendTests(unittest.TestCase):
         cookie=response.headers.get('Set-Cookie','')
         self.assertIn('HttpOnly',cookie)
         self.assertIn('SameSite=Lax',cookie)
+
+    @patch.object(server,'credentials',return_value=('test-key',None))
+    @patch.object(server,'generate')
+    def test_live_and_demo_jobs_keep_mode_and_scene_after_reload(self,generator,credentials):
+        for mode in ('live','demo'):
+            with self.subTest(mode=mode), patch.object(server.Handler,'generation_mode',mode):
+                client=self.client()
+                self.assertEqual(json.load(client.open(self.base+'/api/session'))['generationMode'],mode)
+                job=self.post(client,self.payload(workflowType='background_change',workflowConfig={'scene_type':'cafe'}))['job']
+                self.assertEqual(job['workflowType'],'background_change')
+                self.assertEqual(job['workflowConfig'],{'scene_type':'cafe'})
+                self.assertEqual(job['previewOnly'],mode=='demo')
+            # A stored demo record stays a demo even after switching to the live server.
+            restored=json.load(client.open(self.base+'/api/jobs/'+job['id']))['job']
+            self.assertEqual(restored['previewOnly'],mode=='demo')
+            self.assertEqual(restored['workflowConfig'],{'scene_type':'cafe'})
 
     def test_community_publish_read_and_withdraw(self):
         owner=self.client();other=self.client()
@@ -256,19 +273,19 @@ class BackendTests(unittest.TestCase):
             self.assertEqual(payload['model'],'gpt-image-2.5-flare')
             self.assertEqual(payload['size'],'1024x1536')
             content=payload['input'][0]['content']
-            self.assertEqual([item['type'] for item in content],['input_text','input_image','input_image'])
+            self.assertEqual([item['type'] for item in content],['input_text','input_image'])
             self.assertIn('城市街道背景',content[0]['text'])
             self.assertIn('保留图1同一张脸',content[0]['text'])
             self.assertIn('保持图1原始画幅比例',content[0]['text'])
             self.assertIn('服装固有色',content[0]['text'])
             self.assertTrue(content[1]['image_url'].startswith('data:image/'))
-            self.assertEqual(content[2]['image_url'],server.background_reference_url('outdoor_street'))
+            self.assertEqual(content[1]['image_url'],server.image_data_url(server.data_path(job_id,'input').read_bytes()))
         with server.connect() as db:
             row=db.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
         self.assertEqual(row['status'],'succeeded')
         self.assertTrue(server.data_path(job_id,'result').is_file())
 
-    def test_background_scenes_have_valid_prompts_and_references(self):
+    def test_background_scenes_have_valid_prompts(self):
         scenes = ('white','studio_gray','outdoor_street','indoor_minimal','beach','cafe')
         for scene in scenes:
             with self.subTest(scene=scene):
@@ -276,10 +293,85 @@ class BackendTests(unittest.TestCase):
                 self.assertIn('只换背景硬规则',prompt)
                 self.assertIn('只移除图1原背景',prompt)
                 self.assertIn('场景',prompt)
-        self.assertIsNone(server.background_reference_url('white'))
-        self.assertIsNone(server.background_reference_url('studio_gray'))
-        self.assertIsNone(server.background_reference_url('indoor_minimal'))
-        self.assertTrue(server.background_reference_url('beach').startswith('https://'))
+                self.assertIn('不得把商品自动穿到模特身上',prompt)
+        with self.assertRaises(ValueError):
+            server.build_background_change_prompt('unknown')
+
+    @patch.object(server,'credentials',return_value=('test-key',None))
+    def test_pose_generates_each_photo_with_its_own_prompt(self,credentials):
+        for count in (4,6,8):
+            with self.subTest(count=count):
+                job_id=uuid4().hex; timestamp=server.now()
+                with server.connect() as db:
+                    db.execute('INSERT INTO jobs(id,visitor,idem,model,status,created,updated,workflow_type,workflow_config) VALUES(?,?,?,?,?,?,?,?,?)',
+                               (job_id,'test',str(uuid4()),'female','queued',timestamp,timestamp,'pose_variation',json.dumps({'pose_count':count})))
+                original=source()
+                server.data_path(job_id,'input').write_bytes(original)
+                requests=[]
+                def respond(request,**kwargs):
+                    requests.append(json.loads(request.data))
+                    return BytesIO(json.dumps({'output':[{'result':base64.b64encode(source((600,900))).decode()}]}).encode())
+                with patch.object(server,'urlopen',side_effect=respond):
+                    server.generate(job_id,'female','pose_variation',{'pose_count':count})
+                self.assertEqual(len(requests),count)
+                self.assertEqual(len({r['input'][0]['content'][0]['text'] for r in requests}),count)
+                for request in requests:
+                    self.assertEqual(request['size'],'1024x1536')
+                    content=request['input'][0]['content']
+                    self.assertEqual(content[1]['image_url'],server.image_data_url(original))
+                    self.assertIn('一张完整的竖版',content[0]['text'])
+                with server.connect() as db:
+                    row=db.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
+                result=server.public_job(row)
+                self.assertEqual(result['status'],'succeeded')
+                self.assertEqual(len(result['images']),count)
+                self.assertEqual(result['image'],result['images'][0])
+                with Image.open(server.data_path(job_id,f'result-{count}')) as image:
+                    self.assertEqual(image.size,(600,900))
+
+    @patch.object(server,'credentials',return_value=('test-key',None))
+    @patch.object(server,'generate')
+    def test_pose_photos_zip_and_delete_are_private(self,generator,credentials):
+        owner=self.client(); stranger=self.client()
+        for value in (3,0,9,'4'):
+            with self.assertRaises(HTTPError) as error:
+                self.post(owner,self.payload(workflowType='pose_variation',workflowConfig={'pose_count':value}))
+            self.assertEqual(error.exception.code,400)
+        job=self.post(owner,self.payload(workflowType='pose_variation',workflowConfig={'pose_count':4}))['job']
+        for index in range(1,5):
+            server.data_path(job['id'],f'result-{index}').write_bytes(source())
+        server.update_job(job['id'],status='succeeded')
+        result=json.load(owner.open(self.base+'/api/jobs/'+job['id']))['job']
+        for route in [*result['images'],'/api/jobs/'+job['id']+'/download.zip']:
+            with self.assertRaises(HTTPError) as error:
+                stranger.open(self.base+route)
+            self.assertEqual(error.exception.code,404)
+            self.assertEqual(owner.open(self.base+route).status,200)
+        response=owner.open(self.base+'/api/jobs/'+job['id']+'/download.zip')
+        self.assertEqual(response.headers['Content-Type'],'application/zip')
+        with zipfile.ZipFile(BytesIO(response.read())) as archive:
+            self.assertEqual(len(archive.namelist()),4)
+            self.assertIsNone(archive.testzip())
+        owner.open(Request(self.base+'/api/jobs/'+job['id'],method='DELETE')).read()
+        self.assertFalse(any(server.data_path(job['id'],f'result-{index}').exists() for index in range(1,5)))
+
+    def test_legacy_pose_sheet_is_split_once_and_original_is_preserved(self):
+        job_id=uuid4().hex; timestamp=server.now()
+        with server.connect() as db:
+            db.execute('INSERT INTO jobs(id,visitor,idem,model,status,created,updated,workflow_type,workflow_config) VALUES(?,?,?,?,?,?,?,?,?)',
+                       (job_id,'test',str(uuid4()),'female','succeeded',timestamp,timestamp,'pose_variation','{"pose_count":4}'))
+        sheet=Image.new('RGB',(1200,1200))
+        for box,color in [((0,0,600,600),'red'),((600,0,1200,600),'green'),((0,600,600,1200),'blue'),((600,600,1200,1200),'yellow')]:
+            sheet.paste(color,box)
+        sheet.save(server.data_path(job_id,'result'),'JPEG')
+        original=server.data_path(job_id,'result').read_bytes()
+        server.migrate_pose_results()
+        samples=[Image.open(server.data_path(job_id,f'result-{index}')).getpixel((100,100)) for index in range(1,5)]
+        self.assertEqual(len(set(samples)),4)
+        self.assertEqual(server.data_path(job_id,'result').read_bytes(),original)
+        first=server.data_path(job_id,'result-1').read_bytes()
+        server.migrate_pose_results()
+        self.assertEqual(server.data_path(job_id,'result-1').read_bytes(),first)
 
     @patch.object(server,'credentials',return_value=('test-key','test-id'))
     def test_gateway_failure_does_not_publish_raw_error(self,credentials):
