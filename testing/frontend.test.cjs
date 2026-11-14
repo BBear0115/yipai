@@ -21,6 +21,7 @@ async function context(initialHash = '') {
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../mockup/community.js'),'utf8'),sandbox);
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../mockup/studio.js'),'utf8'),sandbox);
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../mockup/tryon.js'),'utf8'),sandbox);
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'../mockup/remake.js'),'utf8'),sandbox);
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../mockup/app.js'),'utf8'),sandbox);
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../mockup/models.js'),'utf8'),sandbox);
   await vm.runInContext('sessionReady',sandbox);
@@ -85,11 +86,12 @@ test('community text is escaped and examples are clearly identified',async()=>{
   assert.ok(html.includes('官方示例'));
 });
 
-test('community posts overlay the product and remake bubble, with like, bookmark and share actions',async()=>{
+test('community posts overlay the product and a 做参考 bubble, with like, bookmark and share actions',async()=>{
   const ctx=await context();
   vm.runInContext("posts=[{id:'0123456789abcdef0123456789abcdef',nickname:'访客',productName:'衬衫',note:'好穿',image:'/image',productImage:'/input',created:new Date().toISOString()}];renderCommunity()",ctx);
   const html=vm.runInContext('app.innerHTML',ctx);
-  assert.match(html,/feed-product-thumb[\s\S]*feed-remake[^>]*>[\s\S]*?拍同款/);
+  assert.match(html,/feed-product-thumb[\s\S]*feed-remake[^>]*data-reference="0123456789abcdef0123456789abcdef"[^>]*>[\s\S]*?做参考/);
+  assert.doesNotMatch(html,/拍同款/);
   assert.match(html,/data-like="0123456789abcdef0123456789abcdef"[^>]*>[\s\S]*?<span>好看<\/span>/);
   const actions=html.slice(html.indexOf('feed-actions'));
   assert.ok(actions.indexOf('好看')<actions.indexOf('收藏')&&actions.indexOf('收藏')<actions.indexOf('分享'));
@@ -101,6 +103,39 @@ test('retired post detail links fall back to the community feed',async()=>{
   vm.runInContext("location.hash='#post/example-dress'",ctx);
   await vm.runInContext('renderRoute()',ctx);
   assert.equal(vm.runInContext('location.hash',ctx),'#community');
+});
+
+test('published works show a badge in 我的 and their post details and stats on the result page',async()=>{
+  const ctx=await context();
+  vm.runInContext("history=[{id:'a',status:'succeeded',image:'/a',date:'11/14',created:'2026-11-14T00:00:00Z',post:{productName:'碎花裙',note:'花色还原好',created:'2026-11-14T00:00:00Z',likes:3,saves:2,remakes:1}},{id:'b',status:'succeeded',image:'/b',date:'11/14',created:'2026-11-14T00:00:00Z',post:null}]",ctx);
+  assert.match(vm.runInContext("historyCard(history[0])",ctx),/status-badge published">已发布/);
+  assert.doesNotMatch(vm.runInContext("historyCard(history[1])",ctx),/已发布/);
+  vm.runInContext("renderResult(history[0])",ctx);
+  const html=vm.runInContext('app.innerHTML',ctx);
+  assert.match(html,/id="delete-job"/);
+  assert.match(html,/碎花裙[\s\S]*花色还原好/);
+  assert.match(html,/<dd>3<\/dd><dt>觉得好看[\s\S]*<dd>2<\/dd><dt>收藏[\s\S]*<dd>1<\/dd><dt>做参考/);
+});
+
+test('deleting a published work asks a second time before removing the post',async()=>{
+  const ctx=await context();
+  vm.runInContext(`
+    titles=[];calls=[];sheet=(title,body,buttons)=>{titles.push(title);lastButtons=buttons};
+    api=async(path,options)=>{calls.push(path+' '+options.method);return {deleted:true,postDeleted:true}};
+    myPage=()=>{};toast=()=>{};
+    history=[{id:'a',status:'succeeded',post:{productName:'碎花裙',likes:1,saves:0}}];posts=[{id:'a'}];
+    confirmDelete(history[0]);
+    lastButtons[1].action();
+  `,ctx);
+  assert.deepEqual(Array.from(vm.runInContext('titles',ctx)),['删除这张作品？','这张作品已发布到社区']);
+  assert.equal(vm.runInContext('calls.length',ctx),0);
+  await vm.runInContext('lastButtons[1].action()',ctx);
+  assert.deepEqual(Array.from(vm.runInContext('calls',ctx)),['/api/jobs/a DELETE']);
+  assert.equal(vm.runInContext('history.length+posts.length',ctx),0);
+  vm.runInContext("titles=[];calls=[];history=[{id:'b',status:'succeeded',post:null}];confirmDelete(history[0])",ctx);
+  await vm.runInContext('lastButtons[1].action()',ctx);
+  assert.deepEqual(Array.from(vm.runInContext('titles',ctx)),['删除这张作品？']);
+  assert.deepEqual(Array.from(vm.runInContext('calls',ctx)),['/api/jobs/b DELETE']);
 });
 
 test('navigation writes task routes to the URL hash',async()=>{
@@ -124,13 +159,15 @@ test('create page keeps the immersive hero and the creation entries',async()=>{
   assert.doesNotMatch(html,/把每一件单品|衣拍灵感|开始创作|官方穿搭灵感|看看示例/);
 });
 
-test('my page holds the profile and the creation history',async()=>{
+test('my page is a profile header with stats, a settings entry and works / saved tabs',async()=>{
   const ctx=await context();
   vm.runInContext("jobsLoaded=true;screen='my';renderMy()",ctx);
   const html=vm.runInContext('app.innerHTML',ctx);
-  assert.match(html,/创作历史/);
   assert.match(html,/edit-profile/);
-  assert.doesNotMatch(html,/home-hero|效果示例/);
+  assert.match(html,/id="my-settings"/);
+  assert.deepEqual(Array.from(vm.runInContext('[...app.innerHTML.matchAll(/data-my-tab="(\\w+)"/g)].map(match=>match[1])',ctx)),['works','saved']);
+  assert.match(html,/作品[\s\S]*已发布[\s\S]*获赞/);
+  assert.doesNotMatch(html,/home-hero|效果示例|tasks-link|batch-upload/);
 });
 
 test('dock routes 创作 to the create page and 我的 to its own page',async()=>{
@@ -143,11 +180,121 @@ test('dock routes 创作 to the create page and 我的 to its own page',async()=
   assert.equal(vm.runInContext('screen',ctx),'home');
 });
 
-test('recreating an official example loads its product photo into the existing prepare flow',async()=>{
+test('开拍 offers camera and library choices, each opening its own file input',async()=>{
   const ctx=await context();
-  vm.runInContext("prepared=false;prepare=()=>{prepared=true};toast=()=>{};recreatePost({productImage:'assets/community/floral-dress-product.jpg'})",ctx);
-  assert.equal(vm.runInContext('draft',ctx),'assets/community/floral-dress-product.jpg');
-  assert.equal(vm.runInContext('prepared',ctx),true);
+  vm.runInContext(`
+    picked=[];input.click=()=>picked.push('library');cameraInput.click=()=>picked.push('camera');
+    buttons={};layer={querySelectorAll:()=>['camera','library'].map(pick=>buttons[pick]={dataset:{pick}})};
+    openOverlay=html=>{sheetHtml=html;return layer};
+    pickImage();buttons.camera.onclick();buttons.library.onclick();
+  `,ctx);
+  assert.match(vm.runInContext('sheetHtml',ctx),/拍照[\s\S]*相册 \/ 文件/);
+  assert.deepEqual(Array.from(vm.runInContext('picked',ctx)),['camera','library']);
+  assert.match(fs.readFileSync(path.join(__dirname,'../mockup/index.html'),'utf8'),/id="camera-input"[^>]*capture="environment"/);
+});
+
+test('the library option advertises multi-select and hands several photos to batch creation',async()=>{
+  const ctx=await context();
+  vm.runInContext(`
+    layer={querySelectorAll:()=>[]};openOverlay=html=>{sheetHtml=html;return layer};pickImage();
+    batched=null;openBatchUpload=files=>{batched=files};
+    input.files=[{name:'a.jpg'},{name:'b.jpg'}];
+  `,ctx);
+  assert.match(vm.runInContext('sheetHtml',ctx),/相册 \/ 文件[\s\S]*最多 10 张/);
+  await vm.runInContext('input.onchange({target:input})',ctx);
+  assert.deepEqual(Array.from(vm.runInContext('batched.map(file=>file.name)',ctx)),['a.jpg','b.jpg']);
+  const html=fs.readFileSync(path.join(__dirname,'../mockup/index.html'),'utf8');
+  assert.match(html,/id="file-input"[^>]*multiple/);
+  assert.doesNotMatch(html,/id="camera-input"[^>]*multiple/);
+});
+
+test('settings no longer offer the task list or batch upload',async()=>{
+  const ctx=await context();
+  vm.runInContext("sheet=(title,body,buttons)=>{labels=buttons.map(button=>button.label)};mySettings()",ctx);
+  const labels=Array.from(vm.runInContext('labels',ctx));
+  assert.ok(!labels.includes('任务列表')&&!labels.includes('批量上传'));
+  assert.ok(!fs.existsSync(path.join(__dirname,'../mockup/tasks.js')));
+});
+
+test('做参考 carries a post\'s effect photo into 拍同款 as the reference, without touching the 开拍 draft',async()=>{
+  const ctx=await context();
+  vm.runInContext("reacted=[];react=async(post,kind)=>{reacted.push(kind)};useAsReference({id:'example-dress',image:'assets/community/floral-dress-result.jpg',productImage:'assets/community/floral-dress-product.jpg',example:true})",ctx);
+  assert.equal(vm.runInContext('tryonDraftState.references[0]',ctx),'assets/community/floral-dress-result.jpg');
+  assert.equal(vm.runInContext('remakeReferencePosts.size',ctx),0);
+  assert.equal(vm.runInContext('location.hash',ctx),'#remake');
+  assert.equal(vm.runInContext('draft',ctx),null);
+  // Choosing it is not a remake yet; the count only rises once a job is submitted.
+  assert.equal(vm.runInContext('reacted.length',ctx),0);
+});
+
+test('home 拍同款 exposes reference, garment roles, model, detail and work source controls',async()=>{
+  const ctx=await context('#remake');
+  const html=vm.runInContext('app.innerHTML',ctx);
+  assert.equal(vm.runInContext('screen',ctx),'remake');
+  assert.match(html,/上装 \/ 下装/);
+  assert.match(html,/连体 \/ 全身/);
+  assert.match(html,/参考照片/);
+  assert.match(html,/人物参考/);
+  assert.match(html,/服装细节参考/);
+  assert.match(html,/data-tryon-camera="reference"/);
+  assert.match(html,/data-remake-work-picker="garment"/);
+  assert.match(html,/data-remake-work-picker="reference"/);
+  assert.match(html,/id="generate"[^>]*disabled/);
+  assert.equal(vm.runInContext('tryonDraftState.outputCount',ctx),3);
+});
+
+test('picking a finished work preserves its garment and identity as distinct inputs',async()=>{
+  const ctx=await context();
+  vm.runInContext("jobsLoaded=true;screen='remake';history=[{id:'done',status:'succeeded',image:'/api/jobs/done/result',model:'female',date:'11/14'}];tryonDraftState.references=['data:image/jpeg;base64,ref'];remakeUseWork('done')",ctx);
+  assert.equal(vm.runInContext('tryonDraftState.garments.upper',ctx),'/api/jobs/done/result');
+  assert.equal(vm.runInContext('tryonDraftState.modelImage',ctx),'/api/jobs/done/result');
+  assert.match(vm.runInContext('app.innerHTML',ctx),/沿用作品中的人物/);
+  const payload=JSON.parse(JSON.stringify(vm.runInContext('remakePayload()',ctx)));
+  assert.equal(payload.workflowType,'remake');
+  assert.deepEqual(payload.inputImages.map(item=>item.role),['upper','reference','model']);
+  assert.equal(payload.workflowConfig.output_count,3);
+});
+
+test('拍同款 submits role inputs, records 做参考 after success, and preserves the 开拍 draft',async()=>{
+  const ctx=await context();
+  vm.runInContext(`
+    screen='remake';currentRoute='#remake';navigate=route=>{location.hash=route};
+    draft='data:image/jpeg;base64,basic';
+    posts=[{id:'0123456789abcdef0123456789abcdef',image:'/api/posts/0123456789abcdef0123456789abcdef/result'}];
+    reacted=[];react=async(post,kind,active)=>{reacted.push([post.id,kind,active])};
+    sourceData=async source=>source.startsWith('data:')?source:'data:image/jpeg;base64,reference';
+    useAsReference(posts[0]);
+    tryonDraftState.garments.upper='data:image/jpeg;base64,product';model='female';
+    calls=[];api=async(path,options)=>{calls.push(JSON.parse(options.body));return {job:{id:'fedcba9876543210fedcba9876543210',status:'queued',created:'2026-11-14T00:00:00Z',workflowType:'remake'}}};
+  `,ctx);
+  await vm.runInContext('submitTryon()',ctx);
+  const body=JSON.parse(JSON.stringify(vm.runInContext('calls[0]',ctx)));
+  assert.equal(body.workflowType,'remake');
+  assert.equal(body.workflowConfig.output_count,3);
+  assert.equal(body.image,'data:image/jpeg;base64,product');
+  assert.deepEqual(body.inputImages.map(item=>item.role),['upper','reference']);
+  assert.equal(body.inputImages[1].image,'data:image/jpeg;base64,reference');
+  assert.ok(body.idempotencyKey.length>0);
+  assert.deepEqual(JSON.parse(JSON.stringify(vm.runInContext('reacted',ctx))),[['0123456789abcdef0123456789abcdef','remake',true]]);
+  assert.equal(vm.runInContext('location.hash',ctx),'#job/fedcba9876543210fedcba9876543210');
+  assert.equal(vm.runInContext('tryonDraftState.references.length',ctx),0);
+  assert.equal(vm.runInContext('draft',ctx),'data:image/jpeg;base64,basic');
+});
+
+test('拍同款 results show three photos, the reference, and regenerate with the same reference',async()=>{
+  const ctx=await context();
+  vm.runInContext(`
+    sent=[];generate=async(source,model,workflow)=>{sent.push({source,model,workflow})};
+    job={id:'remake',model:'male',status:'succeeded',created:new Date().toISOString(),image:'/r-1',images:['/r-1','/r-2','/r-3'],original:'/input',reference:'/api/jobs/remake/reference',workflowType:'remake',workflowConfig:{model_source:'preset',model:'male'}};
+    renderResult(job);
+  `,ctx);
+  const html=vm.runInContext('app.innerHTML',ctx);
+  assert.equal((html.match(/data-pose-image=/g)||[]).length,3);
+  assert.match(html,/共 3 张独立图片/);
+  assert.match(html,/拍同款第 1 张/);
+  assert.match(html,/id="result-reference"[\s\S]*参考图/);
+  assert.match(html,/商品原图/);
+  assert.equal(vm.runInContext('poseProgress({workflowType:"remake",images:["/r-1"]})',ctx),'已生成 1 / 3 张');
 });
 
 test('model library initializes only after app APIs and toast are available',()=>{
@@ -155,9 +302,9 @@ test('model library initializes only after app APIs and toast are available',()=
   assert.ok(html.indexOf('app.js')<html.indexOf('models.js'));
 });
 
-test('directly opening the empty try-on workspace renders before the model library loads',async()=>{
-  const ctx=await context('#prepare');
-  assert.equal(vm.runInContext('screen',ctx),'prepare');
+test('directly opening remake renders the advanced workspace before the model library loads',async()=>{
+  const ctx=await context('#remake');
+  assert.equal(vm.runInContext('screen',ctx),'remake');
   assert.match(vm.runInContext('app.innerHTML',ctx),/服装细节参考/);
   assert.equal(vm.runInContext('selectedModelId',ctx),null);
 });
@@ -178,7 +325,7 @@ test('pose result displays each output separately and offers all-image download'
   const html=vm.runInContext('app.innerHTML',ctx);
   assert.equal((html.match(/data-pose-image=/g)||[]).length,4);
   assert.match(html,/第 <span id="pose-result-index">1<\/span> 张 \/ 共 4 张独立图片/);
-  assert.match(html,/下载全部姿势裂变 4 张/);
+  assert.match(html,/下载全部 4 张/);
   assert.match(html,/data-pose-image="3" aria-label="查看第 4 张图片"/);
   assert.doesNotMatch(html,/宫格/);
 });
@@ -197,7 +344,7 @@ test('pose thumbnail selection controls the large image, viewer, sharing, and sa
     renderResult({id:'poses',model:'female',status:'succeeded',image:'/pose-1',images:['/pose-1','/pose-2','/pose-3','/pose-4'],original:'/input',workflowType:'pose_variation'});
     poseButtons[1].onclick();
     controls['#save'].onclick();
-    controls['#zoom-result'].onclick();
+    controls['#result-primary'].onclick();
     controls['#share'].onclick();
   `,ctx);
   assert.match(vm.runInContext("controls['#result-primary'].innerHTML",ctx),/src="\/pose-2"/);
@@ -260,6 +407,22 @@ test('old workbench links redirect to the matching page',async()=>{
     await vm.runInContext('renderRoute()',ctx);
     assert.equal(vm.runInContext('location.hash',ctx),to,from);
   }
+});
+
+test('创意裂变 picker offers camera, album and finished works, and a picked work becomes the upload',async()=>{
+  const ctx=await context();
+  vm.runInContext(`
+    jobsLoaded=true;
+    history=[{id:'done',status:'succeeded',image:'/api/jobs/done/result',model:'female',date:'11/14',created:'2026-11-14T00:00:00Z'},{id:'running',status:'running',model:'female',date:'11/14',created:'2026-11-14T01:00:00Z'}];
+    screen='variations';studioState.upload='';renderVariations('pose');
+  `,ctx);
+  const html=vm.runInContext('app.innerHTML',ctx);
+  assert.match(html,/data-studio-camera/);
+  assert.match(html,/data-studio-upload/);
+  assert.match(html,/capture="environment"/);
+  assert.deepEqual(Array.from(vm.runInContext('[...app.innerHTML.matchAll(/data-studio-work="(\\w+)"/g)].map(match=>match[1])',ctx)),['done']);
+  vm.runInContext("studioUseWork('done')",ctx);
+  assert.equal(vm.runInContext('studioState.upload',ctx),'/api/jobs/done/result');
 });
 
 test('创意裂变 submission sends typed config with an idempotency key and opens its returned job',async()=>{
@@ -346,7 +509,7 @@ test('try-on lower-only submission keeps gender separate from library model ID',
   vm.runInContext(`
     tryonDraftState={clothingMode:'multi',garments:{upper:null,lower:'data:image/jpeg;base64,lower',single:null},references:[],modelImage:null,detailsEnabled:false,details:{upper:[],lower:[],single:[]},outputCount:1,instruction:''};
     selectedModelId='0123456789abcdef0123456789abcdef';
-    currentRoute='#prepare';screen='prepare';
+    currentRoute='#remake';screen='remake';
     calls=[];navigate=route=>{location.hash=route};
     api=async(path,options)=>{calls.push({path,options});return {job:{id:'abcdef0123456789abcdef0123456789',status:'queued',created:new Date().toISOString()}}};
   `,ctx);
@@ -357,7 +520,7 @@ test('try-on lower-only submission keeps gender separate from library model ID',
   const body=JSON.parse(vm.runInContext('calls[0].options.body',ctx));
   assert.equal(body.model,'male');
   assert.equal(body.modelId,'0123456789abcdef0123456789abcdef');
-  assert.equal(body.workflowType,'tryon');
+  assert.equal(body.workflowType,'remake');
   assert.deepEqual(body.workflowConfig,{clothing_mode:'multi',output_count:1,instruction:''});
   assert.equal(body.image,'data:image/jpeg;base64,lower');
   assert.deepEqual(body.inputImages.map(item=>item.role),['lower']);
@@ -368,7 +531,7 @@ test('try-on single garment and uploaded model photos submit as separate roles',
   const ctx=await context();
   vm.runInContext(`
     tryonDraftState={clothingMode:'single',garments:{upper:'data:image/jpeg;base64,inactive-upper',lower:null,single:'data:image/jpeg;base64,dress'},references:[],modelImage:'data:image/jpeg;base64,face',detailsEnabled:false,details:{upper:[],lower:[],single:[]},outputCount:1,instruction:''};
-    selectedModelId='';currentRoute='#prepare';screen='prepare';calls=[];navigate=route=>{location.hash=route};
+    selectedModelId='';currentRoute='#remake';screen='remake';calls=[];navigate=route=>{location.hash=route};
     api=async(path,options)=>{calls.push({path,options});return {job:{id:'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',status:'queued',created:new Date().toISOString()}}};
   `,ctx);
   const workflow=vm.runInContext('buildTryonWorkflow()',ctx);
@@ -381,10 +544,14 @@ test('try-on single garment and uploaded model photos submit as separate roles',
   assert.equal(body.image,'data:image/jpeg;base64,dress');
 });
 
-test('empty prepare route opens the garment workbench and home create goes directly to it',async()=>{
+test('开拍 prepares one product while 拍同款 contains the garment workbench',async()=>{
   const ctx=await context();
-  vm.runInContext("location.hash='#prepare';currentRoute='';renderRoute()",ctx);
+  vm.runInContext("draft='data:image/png;base64,product';location.hash='#prepare';currentRoute='';renderRoute()",ctx);
   assert.equal(vm.runInContext('location.hash',ctx),'#prepare');
+  assert.match(vm.runInContext('app.innerHTML',ctx),/商品原图/);
+  assert.doesNotMatch(vm.runInContext('app.innerHTML',ctx),/服装细节参考|data-clothing-mode|data-tryon-upload/);
+  vm.runInContext("location.hash='#remake';renderRoute()",ctx);
+  assert.equal(vm.runInContext('location.hash',ctx),'#remake');
   assert.match(vm.runInContext('app.innerHTML',ctx),/上装 \/ 下装/);
   assert.match(vm.runInContext('app.innerHTML',ctx),/连体 \/ 全身/);
   assert.match(vm.runInContext('app.innerHTML',ctx),/上传上装/);
@@ -392,15 +559,47 @@ test('empty prepare route opens the garment workbench and home create goes direc
   assert.equal(vm.runInContext("tryonDraftState.clothingMode",ctx),'multi');
 });
 
-test('home continue preserves role-uploaded garment and references',async()=>{
+test('开拍 submits only its product and model, preserving the advanced remake draft',async()=>{
   const ctx=await context();
-  vm.runInContext("screen='prepare';currentRoute='#prepare';routeVersion=1;normalizeTryonFile=async file=>file.image",ctx);
+  vm.runInContext(`
+    screen='prepare';currentRoute='#prepare';draft='data:image/jpeg;base64,basic';
+    tryonDraftState.garments.upper='data:image/jpeg;base64,advanced';
+    tryonDraftState.references=['data:image/jpeg;base64,reference'];
+    selectedModelId='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    controls={};document.querySelector=selector=>controls[selector]||={classList:{toggle(){}},setAttribute(){},addEventListener(){},querySelector(){return {innerHTML:''}}};
+    document.querySelectorAll=()=>[];
+    navigate=()=>{};api=async(path,options)=>{sent=JSON.parse(options.body);return {job:{id:'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',status:'queued',created:new Date().toISOString()}}};
+    renderPrepare();controls['#generate'].onclick();
+  `,ctx);
+  await new Promise(resolve=>setImmediate(resolve));
+  const body=JSON.parse(JSON.stringify(vm.runInContext('sent',ctx)));
+  assert.equal(body.image,'data:image/jpeg;base64,basic');
+  assert.equal(body.modelId,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+  assert.equal(body.inputImages,undefined);
+  assert.equal(body.workflowConfig,undefined);
+  assert.equal(body.reference,undefined);
+  assert.equal(vm.runInContext('tryonDraftState.garments.upper',ctx),'data:image/jpeg;base64,advanced');
+  assert.equal(vm.runInContext('tryonDraftState.references.length',ctx),1);
+});
+
+test('拍同款 blocks missing references before requesting generation',async()=>{
+  const ctx=await context();
+  vm.runInContext(`tryonDraftState.garments.upper='data:image/jpeg;base64,product';calls=0;generate=async()=>{calls++};showTryonError=message=>lastError=message;`,ctx);
+  await vm.runInContext('submitTryon()',ctx);
+  assert.equal(vm.runInContext('calls',ctx),0);
+  assert.match(vm.runInContext('lastError',ctx),/参考照片/);
+});
+
+test('returning to remake preserves its garment and references independently of the basic draft',async()=>{
+  const ctx=await context();
+  vm.runInContext("screen='remake';currentRoute='#remake';routeVersion=1;normalizeTryonFile=async file=>file.image",ctx);
   await vm.runInContext("addTryonFiles('garment','lower',[{image:'data:image/jpeg;base64,lower'}])",ctx);
   await vm.runInContext("addTryonFiles('reference',null,[{image:'data:image/jpeg;base64,reference'}])",ctx);
-  vm.runInContext("screen='home';currentRoute='#home';draft=null;prepare=()=>navigate('#prepare');prepare()",ctx);
+  vm.runInContext("screen='home';currentRoute='#home';draft='data:image/jpeg;base64,basic';navigate('#remake')",ctx);
   assert.equal(vm.runInContext('tryonDraftState.garments.lower',ctx),'data:image/jpeg;base64,lower');
   assert.equal(vm.runInContext('tryonDraftState.references[0]',ctx),'data:image/jpeg;base64,reference');
-  assert.equal(vm.runInContext('location.hash',ctx),'#prepare');
+  assert.equal(vm.runInContext('location.hash',ctx),'#remake');
+  assert.equal(vm.runInContext('draft',ctx),'data:image/jpeg;base64,basic');
 });
 
 test('selecting a library model updates gender separately and persists the library ID',async()=>{
@@ -423,7 +622,7 @@ test('starting a new try-on draft clears references, details, and instruction',a
   assert.deepEqual(Array.from(state.details.single),[]);
   assert.equal(state.detailsEnabled,false);
   assert.equal(state.instruction,'');
-  assert.equal(state.outputCount,1);
+  assert.equal(state.outputCount,3);
 });
 
 test('try-on expands reference count by per-reference output count and preserves separate refs',async()=>{
@@ -479,7 +678,7 @@ test('try-on idempotency includes every input and retries reuse the same key',as
 
 test('slow try-on upload does not overwrite a newer draft',async()=>{
   const ctx=await context();
-  vm.runInContext(`screen='prepare';currentRoute='#prepare';routeVersion=3;normalizeTryonFile=async()=>new Promise(resolve=>finishUpload=resolve)`,ctx);
+  vm.runInContext(`screen='remake';currentRoute='#remake';routeVersion=3;normalizeTryonFile=async()=>new Promise(resolve=>finishUpload=resolve)`,ctx);
   const pending=vm.runInContext("addTryonFiles('garment','upper',[{name:'old'}],tryonDraftRevision,currentRoute,routeVersion)",ctx);
   await new Promise(resolve=>setImmediate(resolve));
   vm.runInContext("resetTryonDraft('data:image/jpeg;base64,new-draft')",ctx);
@@ -491,7 +690,7 @@ test('slow try-on upload does not overwrite a newer draft',async()=>{
 test('try-on upload failure appears beside its control and preserves the existing image',async()=>{
   const ctx=await context();
   vm.runInContext(`
-    screen='prepare';currentRoute='#prepare';routeVersion=3;
+    screen='remake';currentRoute='#remake';routeVersion=3;
     tryonDraftState.garments.upper='data:image/jpeg;base64,existing';
     uploadFeedback={hidden:true,textContent:'',classList:{toggle(){}},setAttribute(){}};
     submitFeedback={hidden:true,textContent:''};
@@ -574,5 +773,5 @@ test('try-on gallery is labeled as try-on rather than pose variation',async()=>{
   vm.runInContext("location.hash='#history'",ctx);
   await vm.runInContext('renderRoute()',ctx);
   assert.equal(vm.runInContext('screen',ctx),'my');
-  assert.match(vm.runInContext('app.innerHTML',ctx),/创作历史/);
+  assert.match(vm.runInContext('app.innerHTML',ctx),/data-my-tab="works"/);
 });

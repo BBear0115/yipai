@@ -391,12 +391,47 @@ class BackendTests(unittest.TestCase):
         with self.assertRaises(HTTPError) as error:
             other.open(Request(self.base+'/api/posts/'+job_id,method='DELETE'))
         self.assertEqual(error.exception.code,404)
-        owner.open(Request(self.base+'/api/jobs/'+job_id,method='DELETE')).read()
-        self.assertEqual(other.open(self.base+selected['image']).status,200)
         owner.open(Request(self.base+'/api/posts/'+job_id,method='DELETE')).read()
         with self.assertRaises(HTTPError) as error:
             other.open(self.base+selected['image'])
         self.assertEqual(error.exception.code,404)
+        jobs=json.load(owner.open(self.base+'/api/jobs'))['jobs']
+        self.assertIsNone(next(job for job in jobs if job['id']==job_id)['post'])
+
+    def test_published_work_carries_post_stats_and_deleting_it_removes_the_post(self):
+        owner,other=self.client(),self.client()
+        job_id=uuid4().hex;timestamp=server.now()
+        visitor=next(iter(next(handler.cookiejar for handler in owner.handlers if isinstance(handler, HTTPCookieProcessor)))).value
+        import hashlib
+        with server.connect() as db:
+            db.execute('INSERT INTO jobs(id,visitor,idem,model,status,created,updated) VALUES(?,?,?,?,?,?,?)',
+                       (job_id,hashlib.sha256(visitor.encode()).hexdigest(),str(uuid4()),'female','succeeded',timestamp,timestamp))
+        server.data_path(job_id,'input').write_bytes(source())
+        server.data_path(job_id,'result').write_bytes(server.watermark(source((900,1200))))
+        def send(client,path,payload,method='POST'):
+            return json.load(client.open(Request(self.base+path,data=json.dumps(payload,ensure_ascii=False).encode(),
+                headers={'Content-Type':'application/json'},method=method)))
+        send(owner,'/api/posts',{'jobId':job_id,'productName':'蓝色上衣','note':'条纹清楚'})
+        for kind in ('like','save','remake'):
+            send(other,f'/api/posts/{job_id}/reactions',{'kind':kind})
+        send(other,f'/api/posts/{job_id}/reactions',{'kind':'like'})
+        stats=send(owner,f'/api/posts/{job_id}/reactions',{'kind':'like'})['stats']
+        self.assertEqual((stats['likes'],stats['saves'],stats['remakes'],stats['liked']),(2,1,1,True))
+        stats=send(owner,f'/api/posts/{job_id}/reactions',{'kind':'like','active':False})['stats']
+        self.assertEqual((stats['likes'],stats['liked']),(1,False))
+        with self.assertRaises(HTTPError) as error:
+            send(other,f'/api/posts/{job_id}/reactions',{'kind':'remake','active':False})
+        self.assertEqual(error.exception.code,400)
+        post=json.load(owner.open(self.base+'/api/jobs/'+job_id))['job']['post']
+        self.assertEqual((post['productName'],post['note'],post['likes'],post['saves'],post['remakes']),('蓝色上衣','条纹清楚',1,1,1))
+        self.assertNotIn(job_id,[job['id'] for job in json.load(other.open(self.base+'/api/jobs'))['jobs']])
+        self.assertTrue(json.load(owner.open(Request(self.base+'/api/jobs/'+job_id,method='DELETE')))['postDeleted'])
+        self.assertNotIn(job_id,[item['id'] for item in json.load(other.open(self.base+'/api/posts'))['posts']])
+        with self.assertRaises(HTTPError) as error:
+            other.open(self.base+f'/api/posts/{job_id}/result')
+        self.assertEqual(error.exception.code,404)
+        with server.connect() as db:
+            self.assertIsNone(db.execute('SELECT 1 FROM post_reactions WHERE post_id=?',(job_id,)).fetchone())
 
     def test_community_rejects_missing_fields_and_unfinished_job(self):
         owner=self.client()
@@ -474,7 +509,7 @@ class BackendTests(unittest.TestCase):
         with patch.object(server,'urlopen',return_value=response) as call:
             server.generate(job_id,'male')
             req=call.call_args.args[0];payload=json.loads(req.data)
-            self.assertEqual(payload['model'],'gpt-image-2.5-flare')
+            self.assertEqual(payload['model'],'gpt-image-2.5-sunburst')
             self.assertIsNone(req.get_header('Uuap-id'))
             content=payload['input'][0]['content']
             self.assertEqual([item['type'] for item in content],['input_text','input_image','input_image'])
@@ -508,7 +543,7 @@ class BackendTests(unittest.TestCase):
         with patch.object(server,'urlopen',return_value=response) as call:
             server.generate(job_id,'female','background_change',{'scene_type':'outdoor_street'})
             req=call.call_args.args[0];payload=json.loads(req.data)
-            self.assertEqual(payload['model'],'gpt-image-2.5-flare')
+            self.assertEqual(payload['model'],'gpt-image-2.5-sunburst')
             self.assertEqual(payload['size'],'1024x1536')
             content=payload['input'][0]['content']
             self.assertEqual([item['type'] for item in content],['input_text','input_image'])
@@ -610,6 +645,252 @@ class BackendTests(unittest.TestCase):
         first=server.data_path(job_id,'result-1').read_bytes()
         server.migrate_pose_results()
         self.assertEqual(server.data_path(job_id,'result-1').read_bytes(),first)
+
+    @patch.object(server,'credentials',return_value=('test-key',None))
+    @patch.object(server,'generate')
+    def test_remake_requires_reference_and_model_choice(self,generator,credentials):
+        client=self.client()
+        reference='data:image/png;base64,'+base64.b64encode(source()).decode()
+        for changes in ({'workflowConfig':{'model_source':'preset','model':'female'}},
+                        {'reference':reference,'workflowConfig':{'model_source':'preset','model':'robot'}},
+                        {'reference':reference,'workflowConfig':{'model_source':'elsewhere'}},
+                        {'reference':reference}):
+            with self.subTest(changes=changes), self.assertRaises(HTTPError) as error:
+                self.post(client,self.payload(workflowType='remake',**changes))
+            self.assertEqual(error.exception.code,400)
+        job=self.post(client,self.payload(workflowType='remake',reference=reference,workflowConfig={'model_source':'preset','model':'male','extra':'x'}))['job']
+        self.assertEqual(job['workflowConfig'],{'model_source':'preset','model':'male'})
+        self.assertEqual(job['reference'],f'/api/jobs/{job["id"]}/reference')
+        self.assertEqual(Image.open(BytesIO(client.open(self.base+job['reference']).read())).size,(600,800))
+        with self.assertRaises(HTTPError) as error:
+            self.client().open(self.base+job['reference'])
+        self.assertEqual(error.exception.code,404)
+
+    def analysis_reply(self,**changes):
+        analysis={'original_category':'连帽卫衣','product_note':'图2里只有格纹长裤是商品。','shot':'全身竖构图','pose':'正面站立',
+                  'styling':'纯黑卫衣','scene':'夜晚街头','lighting':'闪光灯直打','color':'高对比','mood':'街拍',
+                  'variants':['照原姿势','侧身走动','蹲坐路边'],'reference_box':[0,100,1000,600],'product_box':[0,0,1000,1000],**changes}
+        text=json.dumps(analysis,ensure_ascii=False)
+        events=[{'type':'response.output_text.delta','delta':text[:40]},{'type':'response.output_text.delta','delta':text[40:]},{'type':'response.completed'}]
+        return BytesIO(''.join(f'data: {json.dumps(event,ensure_ascii=False)}\n\n' for event in events).encode()+b'data: [DONE]\n\n')
+
+    @patch.object(server, 'credentials', return_value=('test-key', None))
+    def test_role_remake_analyzes_each_reference_and_generates_three_with_all_garments(self, credentials):
+        owner = self.client()
+        inputs = [self.tryon_input('upper', 'red', size=(330, 502)), self.tryon_input('lower', 'blue', size=(480, 444)),
+                  self.tryon_input('reference', 'green'), self.tryon_input('reference', 'yellow'),
+                  self.tryon_input('model', 'purple'), self.tryon_input('detail', 'orange', size=(160, 160), garmentRole='lower')]
+        body = self.payload(workflowType='remake', workflowConfig={'clothing_mode':'multi', 'instruction':'棕色乐福鞋'}, inputImages=inputs)
+        with patch.object(server, 'generate'):
+            job = self.post(owner, body)['job']
+        self.assertEqual(job['workflowConfig']['output_count'], 3)
+        self.assertEqual(len(job['inputImages']), 6)
+        self.assertEqual(job['reference'], job['inputImages'][2]['url'])
+        with patch.object(server, 'analysis_credentials', return_value=('key', 'http://analyze.invalid/v1', 'vision')):
+            with patch.object(server, 'urlopen', return_value=self.analysis_reply()) as request:
+                analysis = server.request_analysis(source(), [{'role':'upper','bytes':source()}, {'role':'lower','bytes':source()}], 'test')
+            content = json.loads(request.call_args.args[0].data)['input'][0]['content']
+            self.assertEqual(len(content), 4)
+            self.assertIn('图2是上装商品；图3是下装商品', content[0]['text'])
+        with patch.object(server, 'request_analysis', return_value=analysis) as analyze, patch.object(server, 'request_image', return_value=source()) as image:
+            server.generate(job['id'], 'female', 'remake', job['workflowConfig'])
+        self.assertEqual(analyze.call_count, 2)
+        self.assertEqual([item['role'] for item in analyze.call_args.args[1]], ['upper', 'lower'])
+        self.assertEqual(image.call_count, 12)  # six photos, each followed by identity calibration
+        prompt = image.call_args_list[0].args[0]
+        self.assertIn('图1是画面参考；图2是上装商品；图3是下装商品；图4是模特身份；图5是服装细节', prompt)
+        self.assertIn('图5只补充图3（下装商品）', prompt)
+        self.assertIn('本张拍法：照原姿势', prompt)
+        self.assertIn('棕色乐福鞋', prompt)
+        self.assertNotIn('保持其人物姿势', prompt)
+        self.assertIn('本张拍法：侧身走动', image.call_args_list[2].args[0])
+        restored = json.load(owner.open(self.base + '/api/jobs/' + job['id']))['job']
+        self.assertEqual(restored['status'], 'succeeded')
+        self.assertEqual(len(restored['images']), 6)
+        with server.connect() as db:
+            row = db.execute('SELECT workflow_config,input_images FROM jobs WHERE id=?', (job['id'],)).fetchone()
+        self.assertNotIn('base64', row['workflow_config'] + row['input_images'])
+
+    @patch.object(server, 'credentials', return_value=('test-key', None))
+    @patch.object(server, 'generate')
+    def test_role_remake_twenty_four_results_and_snapshots_are_private_and_deleted(self, generator, credentials):
+        owner = self.client(); stranger = self.client()
+        inputs = [self.tryon_input('single'), *[self.tryon_input('reference') for _ in range(8)]]
+        body = self.payload(workflowType='remake', workflowConfig={'clothing_mode':'single'}, inputImages=inputs)
+        job = self.post(owner, body)['job']
+        self.assertEqual(job['inputImages'][-1]['role'], 'model')
+        for item in job['inputImages']:
+            self.assertEqual(owner.open(self.base + item['url']).status, 200)
+            with self.assertRaises(HTTPError) as error:
+                stranger.open(self.base + item['url'])
+            self.assertEqual(error.exception.code, 404)
+        for index in range(1, 25):
+            server.data_path(job['id'], f'result-{index}').write_bytes(source())
+        server.update_job(job['id'], status='succeeded')
+        server.analysis_path(job['id']).write_text('{}')
+        restored = json.load(owner.open(self.base + '/api/jobs/' + job['id']))['job']
+        self.assertEqual(len(restored['images']), 24)
+        for path in [restored['images'][-1], '/api/jobs/' + job['id'] + '/download.zip']:
+            self.assertEqual(owner.open(self.base + path).status, 200)
+            with self.assertRaises(HTTPError) as error:
+                stranger.open(self.base + path)
+            self.assertEqual(error.exception.code, 404)
+        with zipfile.ZipFile(BytesIO(owner.open(self.base + '/api/jobs/' + job['id'] + '/download.zip').read())) as archive:
+            self.assertEqual(len(archive.namelist()), 24)
+            self.assertIn('yipai-remake-24.jpg', archive.namelist())
+        owner.open(Request(self.base + '/api/jobs/' + job['id'], method='DELETE')).read()
+        self.assertFalse(any(server.DATA.glob(job['id'] + '.*')))
+
+    @patch.object(server, 'credentials', return_value=('test-key', None))
+    @patch.object(server, 'generate')
+    def test_role_remake_validates_reference_config_detail_ownership_and_identity_source(self, generator, credentials):
+        owner = self.client()
+        good = [self.tryon_input('upper'), self.tryon_input('reference')]
+        invalid = [({'clothing_mode':'multi'}, good[:1]),
+                   ({'clothing_mode':'multi','output_count':4}, good),
+                   ({'clothing_mode':'multi'}, [*good, self.tryon_input('detail', garmentRole='lower')]),
+                   ({'clothing_mode':'multi'}, [self.tryon_input('upper', size=(200,240)), good[1]]),
+                   ({'clothing_mode':'multi','model_source':'work'}, [*good, self.tryon_input('model')])]
+        for config, inputs in invalid:
+            with self.subTest(config=config, roles=[item['role'] for item in inputs]), self.assertRaises(HTTPError) as error:
+                self.post(owner, self.payload(workflowType='remake', workflowConfig=config, inputImages=inputs))
+            self.assertEqual(error.exception.code, 400)
+        self.assertFalse(generator.called)
+        self.assertEqual(json.load(owner.open(self.base + '/api/jobs'))['jobs'], [])
+
+    @patch.object(server, 'credentials', return_value=('test-key', None))
+    def test_role_remake_from_existing_work_keeps_its_identity_without_default_model(self, credentials):
+        owner = self.client()
+        body = self.payload(workflowType='remake', workflowConfig={'clothing_mode':'auto','model_source':'work','output_count':1},
+                            inputImages=[self.tryon_input('auto'), self.tryon_input('reference')])
+        with patch.object(server, 'generate'):
+            job = self.post(owner, body)['job']
+        self.assertEqual([item['role'] for item in job['inputImages']], ['auto', 'reference'])
+        with patch.object(server, 'analysis_credentials', return_value=('key', 'http://analyze.invalid/v1', 'vision')):
+            with patch.object(server, 'urlopen', return_value=self.analysis_reply()):
+                analysis = server.request_analysis(source(), source(), 'test')
+        with patch.object(server, 'request_analysis', return_value=analysis), patch.object(server, 'request_image', return_value=source()) as image:
+            server.generate(job['id'], 'female', 'remake', job['workflowConfig'])
+        self.assertEqual(image.call_count, 1)
+        self.assertIn('出镜人物沿用图2商品作品中的模特', image.call_args.args[0])
+        self.assertNotIn('保留图1人物的脸部身份', image.call_args.args[0])
+
+    @patch.object(server, 'credentials', return_value=('image-only-key', None))
+    @patch.object(server, 'analysis_credentials', return_value=(None, 'http://analysis.invalid/v1', 'vision'))
+    def test_role_remake_without_analyzer_uses_only_the_configured_image_provider(self, analyzer, credentials):
+        owner = self.client()
+        body = self.payload(workflowType='remake', workflowConfig={'clothing_mode':'multi'},
+                            inputImages=[self.tryon_input('lower'), self.tryon_input('reference')])
+        with patch.object(server, 'generate'):
+            job = self.post(owner, body)['job']
+        urls = []; prompts = []
+        def respond(request, **kwargs):
+            urls.append(request.full_url)
+            prompts.append(json.loads(request.data)['input'][0]['content'][0]['text'])
+            self.assertEqual(request.get_header('Authorization'), 'image-only-key')
+            return BytesIO(json.dumps({'output':[{'result':base64.b64encode(source()).decode()}]}).encode())
+        with patch.object(server, 'urlopen', side_effect=respond):
+            server.generate(job['id'], 'female', 'remake', job['workflowConfig'])
+        self.assertEqual(urls, [server.GATEWAY] * 6)
+        self.assertIn('本张拍法：尽量复现参考照片的构图和姿势', prompts[0])
+        self.assertIn('改为自然走动或侧身抓拍', prompts[2])
+        self.assertIn('换一个机位和自然姿势', prompts[4])
+        self.assertEqual(json.loads(server.analysis_path(job['id']).read_text())['references'][0]['_source'], 'direct-reference')
+        restored = json.load(owner.open(self.base + '/api/jobs/' + job['id']))['job']
+        self.assertEqual(restored['status'], 'succeeded')
+        self.assertEqual(len(restored['images']), 3)
+
+    def remake_job(self,config):
+        job_id=uuid4().hex;timestamp=server.now()
+        with server.connect() as db:
+            db.execute('INSERT INTO jobs(id,visitor,idem,model,status,created,updated,workflow_type,workflow_config) VALUES(?,?,?,?,?,?,?,?,?)',
+                       (job_id,'test',str(uuid4()),config.get('model','female'),'queued',timestamp,timestamp,'remake',json.dumps(config)))
+        server.data_path(job_id,'input').write_bytes(source())
+        server.data_path(job_id,'reference').write_bytes(source((600,1200)))
+        return job_id
+
+    @patch.object(server,'analysis_credentials',return_value=('analyze-key','http://analyze.invalid/v1','vision-model'))
+    @patch.object(server,'credentials',return_value=('test-key',None))
+    def test_remake_reads_the_reference_then_generates_three_photos(self,credentials,analysis_credentials):
+        job_id=self.remake_job({'model_source':'preset','model':'male'})
+        requests=[]
+        def respond(request,**kwargs):
+            body=json.loads(request.data);requests.append((request.full_url,body,request.get_header('Authorization')))
+            if body.get('stream'):
+                return self.analysis_reply()
+            return BytesIO(json.dumps({'output':[{'result':base64.b64encode(source((600,900))).decode()}]}).encode())
+        with patch.object(server,'urlopen',side_effect=respond):
+            server.generate(job_id,'male','remake',{'model_source':'preset','model':'male'})
+        url,analysis,auth=requests[0]
+        self.assertEqual(url,'http://analyze.invalid/v1/responses')
+        self.assertEqual((analysis['model'],auth),('vision-model','Bearer analyze-key'))
+        self.assertEqual([item['type'] for item in analysis['input'][0]['content']],['input_text','input_image','input_image'])
+        generations=[body for _,body,_ in requests[1:]]
+        self.assertEqual(len(generations),3)
+        prompts=[body['input'][0]['content'][0]['text'] for body in generations]
+        for prompt,variant in zip(prompts,['照原姿势','侧身走动','蹲坐路边']):
+            self.assertIn(variant,prompt)
+            self.assertIn('图2的模特',prompt)
+            self.assertIn('忽略此人的长相',prompt)
+            self.assertIn('图2里只有格纹长裤是商品',prompt)
+        content=generations[0]['input'][0]['content']
+        self.assertEqual(len(content),4)
+        # The reference is cropped to the photo region the analysis reported before generation sees it.
+        reference=Image.open(BytesIO(base64.b64decode(content[3]['image_url'].split(',',1)[1])))
+        self.assertEqual(reference.size,(600,600))
+        with server.connect() as db:
+            row=db.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
+        result=server.public_job(row)
+        self.assertEqual(result['status'],'succeeded')
+        self.assertEqual(len(result['images']),3)
+        self.assertTrue(server.analysis_path(job_id).is_file())
+
+    @patch.object(server,'analysis_credentials',return_value=('analyze-key','http://analyze.invalid/v1','vision-model'))
+    @patch.object(server,'credentials',return_value=('test-key',None))
+    def test_remake_from_a_work_keeps_its_model_and_resumes_after_a_failure(self,credentials,analysis_credentials):
+        job_id=self.remake_job({'model_source':'work','model':'female'})
+        calls=[]
+        def respond(request,**kwargs):
+            body=json.loads(request.data);calls.append(body)
+            if body.get('stream'):
+                return self.analysis_reply()
+            if len(calls)==3:
+                raise HTTPError(server.GATEWAY,500,'upstream',{},None)
+            return BytesIO(json.dumps({'output':[{'result':base64.b64encode(source((600,900))).decode()}]}).encode())
+        with patch.object(server,'urlopen',side_effect=respond):
+            server.generate(job_id,'female','remake',{'model_source':'work'})
+        with server.connect() as db:
+            self.assertEqual(db.execute('SELECT status FROM jobs WHERE id=?',(job_id,)).fetchone()['status'],'failed')
+        first=calls[1]['input'][0]['content']
+        self.assertEqual(len(first),3)
+        self.assertIn('图1中的模特就是出镜模特',first[0]['text'])
+        calls.clear()
+        with patch.object(server,'urlopen',side_effect=respond):
+            server.generate(job_id,'female','remake',{'model_source':'work'})
+        # The saved analysis and the finished first photo are reused; only photos 2 and 3 are requested.
+        self.assertFalse(any(body.get('stream') for body in calls))
+        self.assertEqual(len(calls),2)
+        with server.connect() as db:
+            self.assertEqual(db.execute('SELECT status FROM jobs WHERE id=?',(job_id,)).fetchone()['status'],'succeeded')
+
+    @patch.object(server,'analysis_credentials',return_value=('analyze-key','http://analyze.invalid/v1','vision-model'))
+    @patch.object(server,'credentials',return_value=('test-key',None))
+    def test_unreadable_reference_fails_with_a_clear_message(self,credentials,analysis_credentials):
+        job_id=self.remake_job({'model_source':'preset','model':'female'})
+        with patch.object(server,'urlopen',return_value=self.analysis_reply(variants=['只有一条'])):
+            server.generate(job_id,'female','remake',{'model_source':'preset','model':'female'})
+        with server.connect() as db:
+            row=db.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
+        self.assertEqual(row['status'],'failed')
+        self.assertIn('参考图',row['error'])
+        self.assertFalse(server.analysis_path(job_id).exists())
+
+    def test_analysis_boxes_ignore_implausible_regions(self):
+        fields={key:'x' for key in ('original_category','product_note','shot','pose','styling','scene','lighting','color','mood')}
+        text=json.dumps({**fields,'variants':['a','b','c'],'reference_box':[0,0,100,100],'product_box':[-50,0,2000,1000]})
+        analysis=server.parse_analysis('好的：'+text)
+        self.assertIsNone(analysis['reference_box'])
+        self.assertEqual(analysis['product_box'],[0,0,1000,1000])
 
     @patch.object(server,'credentials',return_value=('test-key','test-id'))
     def test_gateway_failure_does_not_publish_raw_error(self,credentials):

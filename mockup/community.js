@@ -22,22 +22,29 @@ function timeAgo(created) {
   if (minutes < 43200) return `${Math.floor(minutes / 1440)}天前`;
   return new Date(time).toLocaleDateString('zh-CN', {month:'long', day:'numeric'});
 }
-// Likes and bookmarks have no backend yet, so they persist per browser.
-const reactions = {likes:new Set(), saved:new Set()};
-try { for (const key of ['likes', 'saved']) reactions[key] = new Set(JSON.parse(localStorage.getItem(`yipai-${key}`) || '[]')); } catch {}
-function toggleReaction(key, id) {
-  const set = reactions[key];
-  if (set.has(id)) set.delete(id); else set.add(id);
-  try { localStorage.setItem(`yipai-${key}`, JSON.stringify([...set])); } catch {}
-  return set.has(id);
-}
-const likeCount = post => (post.likes || 0) + (reactions.likes.has(post.id) ? 1 : 0);
+// Member posts keep likes, saves and remakes on the server so their author can see the numbers.
+// Official examples have no server row, so their reactions stay in this browser.
+const exampleReactions = {like:new Set(), save:new Set()};
+try { for (const key of ['like', 'save']) exampleReactions[key] = new Set(JSON.parse(localStorage.getItem(`yipai-example-${key}`) || '[]')); } catch {}
+const isLiked = post => post.example ? exampleReactions.like.has(post.id) : Boolean(post.liked);
+const isSaved = post => post.example ? exampleReactions.save.has(post.id) : Boolean(post.saved);
+const likeCount = post => post.example ? Number(isLiked(post)) : post.likes || 0;
 const likeLabel = post => likeCount(post) ? String(likeCount(post)) : '好看';
+async function react(post, kind, active) {
+  if (post.example) {
+    const set = exampleReactions[kind];
+    if (active) set.add(post.id); else set.delete(post.id);
+    try { localStorage.setItem(`yipai-example-${kind}`, JSON.stringify([...set])); } catch {}
+    return;
+  }
+  const {stats} = await api(`/api/posts/${post.id}/reactions`, {method:'POST', body:JSON.stringify({kind, active})});
+  Object.assign(post, stats);
+}
 // One post reads like a social feed entry: author row, the effect photo with the product inset, actions, then caption.
 function feedPost(post) {
   const id = escapeHtml(post.id), name = escapeHtml(post.productName);
-  const liked = reactions.likes.has(post.id), saved = reactions.saved.has(post.id);
-  return `<article class="feed-post"><header class="feed-post-head"><span class="small-avatar">${escapeHtml(post.nickname.slice(0,1))}</span><strong>${escapeHtml(post.nickname)}</strong>${post.example?'<span class="example-tag">官方示例</span>':''}<button class="icon-button feed-post-more" data-more="${id}" aria-label="${name}的更多操作">${icon('more')}</button></header><div class="feed-media"><div class="feed-photo" role="button" tabindex="0" data-view="${id}" aria-label="放大查看${name}效果图">${photo(post.image, `${post.productName}模特效果图`, 'feed-result', true)}</div><div class="feed-product"><div class="feed-product-thumb" role="button" tabindex="0" data-original="${id}" aria-label="查看${name}商品原图">${photo(post.productImage, `${post.productName}商品原图`, '', true)}</div><button class="feed-remake" data-recreate="${id}">${icon('camera')}拍同款</button></div></div><div class="feed-actions"><button class="feed-action" data-like="${id}" aria-pressed="${liked}" aria-label="觉得${name}好看">${icon('thumb')}<span>${likeLabel(post)}</span></button><button class="feed-action" data-bookmark="${id}" aria-pressed="${saved}" aria-label="收藏${name}">${icon('bookmark')}<span>收藏</span></button><button class="feed-action" data-share="${id}" aria-label="分享${name}">${icon('send')}<span>分享</span></button><button class="icon-button feed-save" data-save="${id}" aria-label="保存${name}效果图">${icon('save')}</button></div><p class="feed-caption"><strong>${escapeHtml(post.nickname)}</strong> <span>${name}</span> ${escapeHtml(post.note)}</p><div class="feed-meta">${post.example ? '官方示例' : escapeHtml(timeAgo(post.created))}</div></article>`;
+  const liked = isLiked(post), saved = isSaved(post);
+  return `<article class="feed-post"><header class="feed-post-head"><span class="small-avatar">${escapeHtml(post.nickname.slice(0,1))}</span><strong>${escapeHtml(post.nickname)}</strong>${post.example?'<span class="example-tag">官方示例</span>':''}<button class="icon-button feed-post-more" data-more="${id}" aria-label="${name}的更多操作">${icon('more')}</button></header><div class="feed-media"><div class="feed-photo" role="button" tabindex="0" data-view="${id}" aria-label="放大查看${name}效果图">${photo(post.image, `${post.productName}模特效果图`, 'feed-result', true)}</div><div class="feed-product"><div class="feed-product-thumb" role="button" tabindex="0" data-original="${id}" aria-label="查看${name}商品原图">${photo(post.productImage, `${post.productName}商品原图`, '', true)}</div><button class="feed-remake" data-reference="${id}">${icon('feature-remake')}做参考</button></div></div><div class="feed-actions"><button class="feed-action" data-like="${id}" aria-pressed="${liked}" aria-label="觉得${name}好看">${icon('community-like')}<span>${likeLabel(post)}</span></button><button class="feed-action" data-bookmark="${id}" aria-pressed="${saved}" aria-label="收藏${name}">${icon('community-bookmark')}<span>收藏</span></button><button class="feed-action" data-share="${id}" aria-label="分享${name}">${icon('community-share')}<span>分享</span></button><button class="icon-button feed-save" data-save="${id}" aria-label="保存${name}效果图">${icon('community-save')}</button></div><p class="feed-caption"><strong>${escapeHtml(post.nickname)}</strong> <span>${name}</span> ${escapeHtml(post.note)}</p><div class="feed-meta">${post.example ? '官方示例' : escapeHtml(timeAgo(post.created))}</div></article>`;
 }
 function renderCommunity() {
   const all = [...posts, ...examples];
@@ -48,9 +55,18 @@ function renderCommunity() {
   });
   bind('view', post => openViewer(post));
   bind('original', post => openViewer(post, true));
-  bind('recreate', recreatePost);
-  bind('like', (post, el) => { el.setAttribute('aria-pressed', toggleReaction('likes', post.id)); el.querySelector('span').textContent = likeLabel(post); });
-  bind('bookmark', (post, el) => { const saved = toggleReaction('saved', post.id); el.setAttribute('aria-pressed', saved); toast(saved ? '已收藏' : '已取消收藏'); });
+  bind('reference', useAsReference);
+  // Flip the button at once; roll back if the server refuses.
+  const toggle = async (post, el, kind, done) => {
+    const next = !(kind === 'like' ? isLiked(post) : isSaved(post)), before = {...post};
+    if (!post.example) Object.assign(post, kind === 'like' ? {liked:next, likes:(post.likes || 0) + (next ? 1 : -1)} : {saved:next, saves:(post.saves || 0) + (next ? 1 : -1)});
+    const paint = () => { el.setAttribute('aria-pressed', String(kind === 'like' ? isLiked(post) : isSaved(post))); if (kind === 'like') el.querySelector('span').textContent = likeLabel(post); };
+    paint();
+    try { await react(post, kind, next); paint(); done?.(next); }
+    catch { Object.assign(post, before); paint(); toast('操作失败，请重试'); }
+  };
+  bind('like', (post, el) => toggle(post, el, 'like'));
+  bind('bookmark', (post, el) => toggle(post, el, 'save', saved => toast(saved ? '已收藏' : '已取消收藏')));
   bind('share', share);
   bind('save', save);
   bind('more', postActions);
@@ -61,7 +77,9 @@ function postActions(post) {
 }
 function withdrawPost(post) {
   sheet('撤回这条发布？', '个人创作历史会保留。', [{label:'保留'}, {label:'撤回', danger:true, action:async () => {
-    await api(`/api/posts/${post.id}`, {method:'DELETE'}); posts = posts.filter(item => item.id !== post.id); communityPage(); toast('已撤回');
+    await api(`/api/posts/${post.id}`, {method:'DELETE'}); posts = posts.filter(item => item.id !== post.id);
+    const job = history.find(item => item.id === post.id); if (job) job.post = null;
+    communityPage(); toast('已撤回');
   }}]);
 }
 function findPost(id) { return [...posts, ...examples].find(post => post.id === id); }
@@ -80,7 +98,10 @@ function renderPublish(job) {
     button.disabled = true; button.textContent = '正在发布…'; pageError('');
     try {
       const data = await api('/api/posts', {method:'POST', body:JSON.stringify({jobId:job.id, nickname, productName, note})});
-      posts = [data.post, ...posts.filter(post => post.id !== data.post.id)]; publishDrafts.delete(job.id); communityPage(); toast('已发布到社区');
+      posts = [data.post, ...posts.filter(post => post.id !== data.post.id)]; publishDrafts.delete(job.id);
+      const {productName:name, note:text, created, likes, saves, remakes} = data.post;
+      job.post = {productName:name, note:text, created, likes, saves, remakes};
+      communityPage(); toast('已发布到社区');
     } catch (error) { pageError(error.message); button.disabled = false; button.innerHTML = `发布到社区 ${icon('arrow')}`; }
   };
   watchImages();

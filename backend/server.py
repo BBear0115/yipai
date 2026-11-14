@@ -37,11 +37,18 @@ from backend.workflows.tryon import (
     GARMENT_ROLES, MAX_TRYON_INPUTS, MAX_TRYON_OUTPUTS, build_tryon_prompt, build_tryon_identity_prompt,
     normalize_tryon_config, ordered_tryon_inputs, validate_tryon_roles,
 )
+from backend.workflows.remake import (
+    ANALYSIS_INSTRUCTION, REMAKE_COUNT, MAX_REMAKE_OUTPUTS, build_remake_prompt,
+    build_role_remake_prompt, direct_reference_analysis, normalize_remake_config, parse_analysis,
+)
 
 STATIC = ROOT / 'mockup'
 DATA = Path(os.environ.get('YIPAI_DATA_DIR', str(ROOT / 'backend' / 'data')))
 DB = DATA / 'jobs.sqlite3'
 GATEWAY = 'https://ai-force.duxiaoman-int.com/v1/responses'
+IMAGE_MODEL = 'gpt-image-2.5-sunburst'
+ANALYZE_BASE_URL = 'http://z.duxiaoman-int.com/coding/v1'
+ANALYZE_MODEL = 'gpt-6.1-sol'
 MAX_INPUT = 20 * 1024 * 1024
 MAX_BODY = 30 * 1024 * 1024
 MAX_OUTPUT = 40 * 1024 * 1024
@@ -53,17 +60,29 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def credentials() -> tuple[str | None, str | None]:
+def env_setting(name: str) -> str | None:
+    """Environment variables win over .env.local."""
+    if os.environ.get(name):
+        return os.environ[name]
     source = Path(os.environ.get('IMAGE2_ENV_FILE', str(ROOT / '.env.local')))
-    values = {}
     if source.is_file():
         for line in source.read_text(encoding='utf-8').splitlines():
             if '=' in line and not line.lstrip().startswith('#'):
                 key, value = line.split('=', 1)
-                if key.strip() in ('IMAGE2_GATEWAY_API_KEY', 'IMAGE2_UUAP_ID'):
-                    values[key.strip()] = value.strip().strip('"\'')
-    return (os.environ.get('IMAGE2_GATEWAY_API_KEY') or values.get('IMAGE2_GATEWAY_API_KEY'),
-            os.environ.get('IMAGE2_UUAP_ID') or values.get('IMAGE2_UUAP_ID'))
+                if key.strip() == name:
+                    return value.strip().strip('"\'') or None
+    return None
+
+
+def credentials() -> tuple[str | None, str | None]:
+    return env_setting('IMAGE2_GATEWAY_API_KEY'), env_setting('IMAGE2_UUAP_ID')
+
+
+def analysis_credentials() -> tuple[str | None, str, str]:
+    """拍同款 reads the reference photo with a vision model on a separate gateway."""
+    return (env_setting('ANALYZE_API_KEY'),
+            env_setting('ANALYZE_BASE_URL') or ANALYZE_BASE_URL,
+            env_setting('ANALYZE_MODEL') or ANALYZE_MODEL)
 
 
 def connect():
@@ -127,6 +146,10 @@ def init_db():
             id TEXT PRIMARY KEY, visitor TEXT NOT NULL, nickname TEXT NOT NULL,
             product_name TEXT NOT NULL, note TEXT NOT NULL, created TEXT NOT NULL)''')
         db.execute('CREATE INDEX IF NOT EXISTS posts_created ON posts(created DESC)')
+        # One row per visitor and kind: like (好看), save (收藏), remake (拍同款 used it as a reference).
+        db.execute('''CREATE TABLE IF NOT EXISTS post_reactions (
+            post_id TEXT NOT NULL, visitor TEXT NOT NULL, kind TEXT NOT NULL, created TEXT NOT NULL,
+            PRIMARY KEY (post_id, visitor, kind))''')
         db.execute('''CREATE TABLE IF NOT EXISTS models (
             id TEXT PRIMARY KEY, name TEXT NOT NULL, gender TEXT NOT NULL,
             image_path TEXT NOT NULL, is_preset INTEGER NOT NULL DEFAULT 1,
@@ -189,6 +212,12 @@ def data_path(job_id: str, kind: str) -> Path:
     return DATA / f'{job_id}.{kind}.jpg'
 
 
+def analysis_path(job_id: str) -> Path:
+    if not re.fullmatch(r'[a-f0-9]{32}', job_id):
+        raise ValueError('任务编号无效')
+    return DATA / f'{job_id}.analysis.json'
+
+
 def post_path(post_id: str, kind: str) -> Path:
     if not re.fullmatch(r'[a-f0-9]{32}', post_id) or kind not in ('input', 'result'):
         raise ValueError('作品编号无效')
@@ -201,7 +230,26 @@ def model_path(model_id: str) -> Path:
     return DATA / f'model-{model_id}.jpg'
 
 
-def public_post(row, visitor: str):
+REACTIONS = {'like': 'likes', 'save': 'saves', 'remake': 'remakes'}
+
+
+def reaction_stats(db, post_ids, visitor: str) -> dict:
+    stats = {post_id: {'likes': 0, 'saves': 0, 'remakes': 0, 'liked': False, 'saved': False} for post_id in post_ids}
+    if not stats:
+        return stats
+    marks = ','.join('?' * len(stats))
+    for row in db.execute(f'SELECT post_id, kind, COUNT(*) AS total, SUM(visitor=?) AS own FROM post_reactions '
+                          f'WHERE post_id IN ({marks}) GROUP BY post_id, kind', (visitor, *stats)):
+        if row['kind'] not in REACTIONS:
+            continue
+        item = stats[row['post_id']]
+        item[REACTIONS[row['kind']]] = row['total']
+        if row['kind'] in ('like', 'save'):
+            item['liked' if row['kind'] == 'like' else 'saved'] = bool(row['own'])
+    return stats
+
+
+def public_post(row, visitor: str, stats: dict | None = None):
     post_id = row['id']
     return {
         'id': post_id, 'nickname': row['nickname'],
@@ -209,7 +257,24 @@ def public_post(row, visitor: str):
         'created': row['created'], 'mine': row['visitor'] == visitor,
         'image': f'/api/posts/{post_id}/result',
         'productImage': f'/api/posts/{post_id}/input',
+        **(stats or {'likes': 0, 'saves': 0, 'remakes': 0, 'liked': False, 'saved': False}),
     }
+
+
+def job_posts(db, job_ids, visitor: str) -> dict:
+    """Publish details for the visitor's own jobs; a post shares its job's id."""
+    ids = list(job_ids)
+    if not ids:
+        return {}
+    rows = db.execute(f'SELECT * FROM posts WHERE visitor=? AND id IN ({",".join("?" * len(ids))})', (visitor, *ids)).fetchall()
+    stats = reaction_stats(db, [row['id'] for row in rows], visitor)
+    return {row['id']: {'productName': row['product_name'], 'note': row['note'], 'created': row['created'],
+                        **{key: stats[row['id']][key] for key in ('likes', 'saves', 'remakes')}} for row in rows}
+
+
+def delete_post_rows(db, post_id: str):
+    db.execute('DELETE FROM posts WHERE id=?', (post_id,))
+    db.execute('DELETE FROM post_reactions WHERE post_id=?', (post_id,))
 
 
 def parse_image(data_url: str, min_dimension: int = 512) -> bytes:
@@ -273,13 +338,16 @@ def prompt_for(model: str) -> str:
     return build_tryon_prompt(model, [{'role': 'auto'}, {'role': 'model'}], normalize_tryon_config(None))
 
 
-def prepare_tryon_inputs(payload, visitor):
+def prepare_tryon_inputs(payload, visitor, workflow_type='tryon'):
     """Normalize uploads and snapshot library identities before starting a job."""
     explicit = 'inputImages' in payload
-    config = normalize_tryon_config(payload.get('workflowConfig'), explicit)
+    config = (normalize_remake_config(payload.get('workflowConfig')) if workflow_type == 'remake'
+              else normalize_tryon_config(payload.get('workflowConfig'), explicit))
     supplied = payload.get('inputImages')
     if explicit:
         validate_tryon_roles(supplied, config['clothing_mode'])
+        if workflow_type == 'remake' and not any(item['role'] == 'reference' for item in supplied):
+            raise ValueError('请上传参考图')
     else:
         if not isinstance(payload.get('image'), str):
             raise ValueError('请上传商品图片')
@@ -293,6 +361,9 @@ def prepare_tryon_inputs(payload, visitor):
         raise ValueError('模特编号无效')
     if model_id and any(item['role'] == 'model' for item in supplied):
         raise ValueError('上传模特图和模特库不能同时选择')
+    if workflow_type == 'remake' and config['model_source'] == 'work' and (
+            model_id or any(item['role'] == 'model' for item in supplied)):
+        raise ValueError('沿用作品人物时不能另选模特')
     inputs = []
     total = 0
     for item in supplied:
@@ -312,7 +383,9 @@ def prepare_tryon_inputs(payload, visitor):
         if not row or not model_path(model_id).is_file():
             raise ValueError('所选模特不存在或无权访问')
         inputs.append({'role': 'model', 'bytes': model_path(model_id).read_bytes()})
-    elif not any(item['role'] in ('model', 'reference') for item in inputs):
+    elif not any(item['role'] == 'model' for item in inputs) and (
+            (workflow_type == 'remake' and config['model_source'] != 'work')
+            or (workflow_type == 'tryon' and not any(item['role'] == 'reference' for item in inputs))):
         default = STATIC / 'assets' / f'{payload.get("model") or "female"}-model.png'
         if not default.is_file():
             raise ValueError('模特参考图缺失')
@@ -337,14 +410,32 @@ def tryon_job_inputs(job_id):
     return inputs
 
 
+def watermark_font(size: int):
+    # PingFang moved into downloadable assets on newer macOS; fall back to fonts that ship with the system.
+    candidates = [os.environ.get('YIPAI_WATERMARK_FONT'),
+                  '/System/Library/Fonts/PingFang.ttc',
+                  *sorted(str(path) for path in Path('/System/Library/AssetsV2').glob('com_apple_MobileAsset_Font*/*/AssetData/PingFang.ttc')),
+                  '/System/Library/Fonts/Hiragino Sans GB.ttc',
+                  '/System/Library/Fonts/STHeiti Medium.ttc',
+                  '/Library/Fonts/Arial Unicode.ttf',
+                  '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
+                  '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc']
+    for candidate in candidates:
+        if candidate:
+            try:
+                return ImageFont.truetype(candidate, size)
+            except OSError:
+                continue
+    return None
+
+
 def watermark(raw: bytes) -> bytes:
     image = Image.open(BytesIO(raw)).convert('RGB')
     draw = ImageDraw.Draw(image, 'RGBA')
-    label = '衣拍 · 人工智能生成'
-    try:
-        font = ImageFont.truetype('/System/Library/Fonts/PingFang.ttc', max(20, image.width // 48))
-    except OSError:
-        font = ImageFont.load_default()
+    font = watermark_font(max(20, image.width // 48))
+    # The default bitmap font has no CJK glyphs, so never draw Chinese with it.
+    label = '衣拍 · 人工智能生成' if font else 'Yipai · AI generated'
+    font = font or ImageFont.load_default()
     bbox = draw.textbbox((0, 0), label, font=font)
     width, height = bbox[2] - bbox[0], bbox[3] - bbox[1]
     pad = max(12, image.width // 70)
@@ -368,7 +459,7 @@ def update_job(job_id: str, **fields):
 def request_image(prompt_text: str, images: list[str], size: str, api_key: str,
                   uuap_id: str | None, request_id: str) -> bytes:
     body = {
-        'model': 'gpt-image-2.5-flare',
+        'model': IMAGE_MODEL,
         'input': [{'role': 'user', 'content': [
             {'type': 'input_text', 'text': prompt_text},
             *[{'type': 'input_image', 'image_url': image} for image in images],
@@ -385,6 +476,143 @@ def request_image(prompt_text: str, images: list[str], size: str, api_key: str,
     if len(response_raw) > MAX_OUTPUT:
         raise RuntimeError('图片服务响应过大')
     return watermark(extract_output(json.loads(response_raw)))
+
+
+def request_analysis(reference: bytes, product: bytes | list[dict], request_id: str) -> dict:
+    """Ask the vision model to read the reference photo's shooting plan. The gateway only answers streamed requests."""
+    api_key, base_url, model = analysis_credentials()
+    if not api_key:
+        raise RuntimeError('反推服务未配置')
+    products = product if isinstance(product, list) else [{'role': 'auto', 'bytes': product}]
+    instruction = ANALYSIS_INSTRUCTION
+    if len(products) > 1:
+        labels = {'upper': '上装商品', 'lower': '下装商品', 'single': '连体商品', 'auto': '目标商品'}
+        instruction += '\n本次需要同时展示多件商品：' + '；'.join(
+            f'图{index}是{labels[item["role"]]}' for index, item in enumerate(products, 2)
+        ) + '。product_note 与每条拍摄方案必须兼顾所有商品，不可只展示第一件；product_box 仅对应图2。'
+    content = [{'type': 'input_text', 'text': instruction},
+               {'type': 'input_image', 'image_url': image_data_url(reference)}]
+    content.extend({'type': 'input_image', 'image_url': image_data_url(item['bytes'])} for item in products)
+    body = {'model': model, 'stream': True, 'input': [{'role': 'user', 'content': content}]}
+    request = Request(base_url.rstrip('/') + '/responses', data=json.dumps(body).encode('utf-8'), method='POST',
+                      headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json',
+                               'Accept': 'text/event-stream', 'request-id': request_id})
+    deltas, final = [], ''
+    with urlopen(request, timeout=300) as response:
+        for raw_line in response:
+            line = raw_line.decode('utf-8', 'replace').strip()
+            if not line.startswith('data:') or line == 'data: [DONE]':
+                continue
+            event = json.loads(line[5:])
+            kind = event.get('type')
+            if kind == 'response.output_text.delta':
+                deltas.append(event.get('delta') or '')
+            elif kind == 'response.output_text.done':
+                final = event.get('text') or final
+            elif kind in ('error', 'response.failed'):
+                raise RuntimeError('反推服务返回错误')
+    return parse_analysis(final or ''.join(deltas))
+
+
+def crop_box(raw: bytes, box) -> bytes:
+    """Crop to the photo region the analysis found, so app chrome never reaches image generation."""
+    if not box or box == [0, 0, 1000, 1000]:
+        return raw
+    with Image.open(BytesIO(raw)) as image:
+        image = image.convert('RGB')
+        left, top, right, bottom = (round(value * size / 1000) for value, size in zip(box, (image.width, image.height, image.width, image.height)))
+        cropped = image.crop((left, top, right, bottom))
+        if min(cropped.size) < 256:
+            return raw
+        output = BytesIO()
+        cropped.save(output, 'JPEG', quality=92)
+        return output.getvalue()
+
+
+def remake_analysis(reference, products, request_id):
+    try:
+        return request_analysis(reference, products, request_id)
+    except RuntimeError as exc:
+        if str(exc) != '反推服务未配置':
+            raise
+        # Keep uploads on the configured image provider; its multimodal editor can read the reference directly.
+        return direct_reference_analysis()
+
+
+def generate_remake(job_id: str, workflow_config: dict, api_key: str, uuap_id: str | None, request_id: str):
+    inputs = tryon_job_inputs(job_id)
+    if inputs:
+        config = normalize_remake_config(workflow_config)
+        references = [item for item in inputs if item['role'] == 'reference']
+        garments = [item for item in inputs if item['role'] in (*GARMENT_ROLES, 'auto')]
+        stored = analysis_path(job_id)
+        cached = json.loads(stored.read_text(encoding='utf-8')) if stored.is_file() else {}
+        analyses = cached.get('references', []) if isinstance(cached, dict) else []
+        for group, reference in enumerate(references):
+            if len(analyses) <= group:
+                analyses.append(remake_analysis(reference['bytes'], garments, f'{request_id}-analysis-{group + 1}'))
+                temporary = stored.with_suffix('.tmp')
+                temporary.write_text(json.dumps({'references': analyses}, ensure_ascii=False), encoding='utf-8')
+                temporary.replace(stored)
+            analysis = analyses[group]
+            ordered = ordered_tryon_inputs(inputs, reference)
+            cropped = [{**item, 'bytes': crop_box(item['bytes'], analysis.get('reference_box'))}
+                       if item['role'] == 'reference' else
+                       {**item, 'bytes': crop_box(item['bytes'], analysis.get('product_box'))}
+                       if item is garments[0] else item for item in ordered]
+            images = [image_data_url(item['bytes']) for item in cropped]
+            identity = next((item for item in ordered if item['role'] == 'model'), None)
+            for candidate in range(config['output_count']):
+                output_index = group * config['output_count'] + candidate + 1
+                destination = data_path(job_id, f'result-{output_index}')
+                if destination.is_file():
+                    continue
+                result = request_image(build_role_remake_prompt(model=workflow_config.get('model', 'female'),
+                                       inputs=ordered, config=config, analysis=analysis, index=candidate),
+                                       images, '1024x1536', api_key, uuap_id, f'{request_id}-{output_index}')
+                if identity:
+                    result = request_image(build_tryon_identity_prompt(),
+                                           [image_data_url(result), image_data_url(identity['bytes'])],
+                                           '1024x1536', api_key, uuap_id, f'{request_id}-{output_index}-identity')
+                temporary = destination.with_suffix('.tmp')
+                temporary.write_bytes(result)
+                temporary.replace(destination)
+                if output_index == 1:
+                    shutil.copyfile(destination, data_path(job_id, 'result'))
+                update_job(job_id)
+                print(f'Image2 request={request_id} remake={output_index}/{len(references) * config["output_count"]} status=success')
+        return
+    product = data_path(job_id, 'input').read_bytes()
+    reference = data_path(job_id, 'reference').read_bytes()
+    keep_model = workflow_config.get('model_source') == 'work'
+    stored = analysis_path(job_id)
+    if stored.is_file():
+        # Regenerating reuses the earlier analysis so the three photos keep the same plan.
+        analysis = json.loads(stored.read_text(encoding='utf-8'))
+    else:
+        analysis = remake_analysis(reference, product, f'{request_id}-analysis')
+        stored.write_text(json.dumps(analysis, ensure_ascii=False), encoding='utf-8')
+        print(f'Remake request={request_id} plan={analysis.get("_source", "vision-analysis")} status=success')
+    images = [image_data_url(crop_box(product, analysis.get('product_box')))]
+    if not keep_model:
+        model_file = STATIC / 'assets' / f'{workflow_config.get("model", "female")}-model.png'
+        if not model_file.is_file():
+            raise RuntimeError('模特参考图缺失')
+        images.append('data:image/png;base64,' + base64.b64encode(model_file.read_bytes()).decode('ascii'))
+    images.append(image_data_url(crop_box(reference, analysis.get('reference_box'))))
+    for index in range(REMAKE_COUNT):
+        destination = data_path(job_id, f'result-{index + 1}')
+        if destination.is_file():
+            continue
+        result = request_image(build_remake_prompt(analysis, index, keep_model), images, '1024x1536',
+                               api_key, uuap_id, f'{request_id}-{index + 1}')
+        temporary = destination.with_suffix('.tmp')
+        temporary.write_bytes(result)
+        temporary.replace(destination)
+        if index == 0:
+            shutil.copyfile(destination, data_path(job_id, 'result'))
+        update_job(job_id)
+        print(f'Image2 request={request_id} remake={index + 1}/{REMAKE_COUNT} status=success')
 
 
 def generate(job_id: str, model: str, workflow_type: str = 'tryon', workflow_config: dict | None = None):
@@ -451,6 +679,10 @@ def generate(job_id: str, model: str, workflow_type: str = 'tryon', workflow_con
                     print(f'Image2 request={request_id} pose={index + 1}/{pose_count} status=success')
                 update_job(job_id, status='succeeded')
                 return
+            elif workflow_type == 'remake':
+                generate_remake(job_id, workflow_config or {}, api_key, uuap_id, request_id)
+                update_job(job_id, status='succeeded')
+                return
             elif workflow_type == 'background_change':
                 scene_type = (workflow_config or {}).get('scene_type', 'white')
                 prompt_text = build_background_change_prompt(scene_type)
@@ -514,12 +746,17 @@ def generate(job_id: str, model: str, workflow_type: str = 'tryon', workflow_con
             update_job(job_id, status='failed', error='图片服务连接超时，请重新生成')
             print(f'Image2 request={request_id} status=timeout')
         except Exception as exc:
-            message = str(exc) if str(exc) in ('图片服务未配置', '模特参考图缺失') else '图片生成失败，请重新生成'
+            if str(exc) in ('图片服务未配置', '模特参考图缺失', '反推服务未配置'):
+                message = str(exc)
+            elif workflow_type == 'remake' and not analysis_path(job_id).is_file():
+                message = '没能看懂这张参考图，请换一张更清楚的截图'
+            else:
+                message = '图片生成失败，请重新生成'
             update_job(job_id, status='failed', error=message)
             print(f'Image2 request={request_id} failure={type(exc).__name__}')
 
 
-def public_job(row):
+def public_job(row, post: dict | None = None):
     job_id = row['id']
     result = {
         'id': job_id, 'model': row['model'], 'status': row['status'],
@@ -527,6 +764,7 @@ def public_job(row):
         'original': f'/api/jobs/{job_id}/input',
         'image': f'/api/jobs/{job_id}/result' if row['status'] == 'succeeded' else None,
         'previewOnly': bool(row['preview_only']) if 'preview_only' in row.keys() else False,
+        'post': post,
     }
     # Add workflow fields if they exist
     if 'workflow_type' in row.keys():
@@ -543,8 +781,11 @@ def public_job(row):
             result['inputImages'] = json.loads(row['input_images']) if row['input_images'] else None
         except (json.JSONDecodeError, TypeError):
             result['inputImages'] = None
-    if result.get('workflowType') in ('tryon', 'pose_variation'):
-        maximum = MAX_TRYON_OUTPUTS if result['workflowType'] == 'tryon' else 8
+    if result.get('workflowType') == 'remake':
+        refs = [item for item in result.get('inputImages', []) if item['role'] == 'reference']
+        result['reference'] = refs[0]['url'] if refs else f'/api/jobs/{job_id}/reference'
+    if result.get('workflowType') in ('tryon', 'pose_variation', 'remake'):
+        maximum = MAX_REMAKE_OUTPUTS if result['workflowType'] == 'remake' else MAX_TRYON_OUTPUTS if result['workflowType'] == 'tryon' else 8
         result['images'] = [f'/api/jobs/{job_id}/result-{index}' for index in range(1, maximum + 1)
                             if data_path(job_id, f'result-{index}').is_file()]
         if result['images'] and row['status'] == 'succeeded':
@@ -599,42 +840,18 @@ class Handler(SimpleHTTPRequestHandler):
             self.session()
             key, uid = credentials()
             return self.json_out(200, {'ready': bool(key), 'generationMode': self.generation_mode})
-        if self.path == '/api/tasks':
-            visitor = self.session()
-            with connect() as db:
-                rows = db.execute('SELECT * FROM task_queue WHERE visitor=? ORDER BY created DESC', (visitor,)).fetchall()
-            tasks = []
-            for row in rows:
-                progress_pct = row['progress'] if row['progress'] >= 0 else 0
-                tasks.append({
-                    'id': row['id'],
-                    'title': row['title'],
-                    'status': row['status'],
-                    'statusGroup': row['status_group'],
-                    'progress': progress_pct,
-                    'expectedCount': row['expected_count'],
-                    'resultCount': row['result_count'],
-                    'created': row['created'],
-                    'updated': row['updated'],
-                    'completed': row['completed'],
-                })
-            grouped = {
-                'queued': [t for t in tasks if t['statusGroup'] == 'queued'],
-                'running': [t for t in tasks if t['statusGroup'] == 'running'],
-                'completed': [t for t in tasks if t['statusGroup'] == 'completed'],
-                'failed': [t for t in tasks if t['statusGroup'] == 'failed'],
-            }
-            return self.json_out(200, {'tasks': tasks, 'grouped': grouped})
         if self.path == '/api/jobs':
             visitor = self.session()
             with connect() as db:
                 rows = db.execute('SELECT * FROM jobs WHERE visitor=? ORDER BY created DESC LIMIT 100', (visitor,)).fetchall()
-            return self.json_out(200, {'jobs': [public_job(row) for row in rows]})
+                published = job_posts(db, [row['id'] for row in rows], visitor)
+            return self.json_out(200, {'jobs': [public_job(row, published.get(row['id'])) for row in rows]})
         if self.path == '/api/posts':
             visitor = self.session()
             with connect() as db:
                 rows = db.execute('SELECT * FROM posts ORDER BY created DESC LIMIT 50').fetchall()
-            return self.json_out(200, {'posts': [public_post(row, visitor) for row in rows]})
+                stats = reaction_stats(db, [row['id'] for row in rows], visitor)
+            return self.json_out(200, {'posts': [public_post(row, visitor, stats[row['id']]) for row in rows]})
         if self.path == '/api/workflows':
             with connect() as db:
                 rows = db.execute('SELECT * FROM workflow_types ORDER BY sort_order ASC').fetchall()
@@ -674,27 +891,29 @@ class Handler(SimpleHTTPRequestHandler):
             visitor = self.session()
             with connect() as db:
                 row = db.execute('SELECT * FROM posts WHERE id=?', (post_id,)).fetchone()
+                stats = reaction_stats(db, [post_id], visitor) if row else {}
             if not row:
                 return self.json_out(404, {'error': '社区作品不存在'})
             if not kind:
-                return self.json_out(200, {'post': public_post(row, visitor)})
+                return self.json_out(200, {'post': public_post(row, visitor, stats[post_id])})
             path = post_path(post_id, kind)
             if not path.is_file():
                 return self.json_out(404, {'error': '图片不存在'})
             raw = path.read_bytes()
             self.headers_out(200, 'image/jpeg', len(raw))
             return self.wfile.write(raw)
-        match = re.fullmatch(r'/api/jobs/([a-f0-9]{32})(?:/(input|input-(?:[1-9]|1[0-5])|result|result-(?:[1-9]|1[0-6])|download\.zip))?', self.path)
+        match = re.fullmatch(r'/api/jobs/([a-f0-9]{32})(?:/(input|reference|input-(?:[1-9]|1[0-5])|result|result-(?:[1-9]|1[0-9]|2[0-4])|download\.zip))?', self.path)
         if match:
             visitor = self.session()
             job_id, kind = match.groups()
             with connect() as db:
                 row = db.execute('SELECT * FROM jobs WHERE id=? AND visitor=?', (job_id, visitor)).fetchone()
+                published = job_posts(db, [job_id], visitor) if row and not kind else {}
             if not row:
                 return self.json_out(404, {'error': '作品不存在'})
             if not kind:
-                return self.json_out(200, {'job': public_job(row)})
-            if kind and not kind.startswith('input') and row['status'] != 'succeeded':
+                return self.json_out(200, {'job': public_job(row, published.get(job_id))})
+            if kind != 'reference' and not kind.startswith('input') and row['status'] != 'succeeded':
                 return self.json_out(404, {'error': '图片尚未生成'})
             if kind == 'download.zip':
                 images = public_job(row).get('images', [])
@@ -703,8 +922,8 @@ class Handler(SimpleHTTPRequestHandler):
                 archive = BytesIO()
                 with zipfile.ZipFile(archive, 'w', zipfile.ZIP_STORED) as bundle:
                     for index, image in enumerate(images, 1):
-                        label = 'pose' if row['workflow_type'] == 'pose_variation' else 'tryon'
-                        bundle.write(data_path(job_id, image.rsplit('/', 1)[-1]), f'yipai-{label}-{index}.jpg')
+                        prefix = {'pose_variation': 'pose', 'tryon': 'tryon', 'remake': 'remake'}[row['workflow_type']]
+                        bundle.write(data_path(job_id, image.rsplit('/', 1)[-1]), f'yipai-{prefix}-{index}.jpg')
                 raw = archive.getvalue()
                 self.headers_out(200, 'application/zip', len(raw), {'Content-Disposition': f'attachment; filename="yipai-{job_id}.zip"'})
                 return self.wfile.write(raw)
@@ -732,6 +951,9 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if self.path == '/api/posts':
             return self.create_post()
+        reaction_match = re.fullmatch(r'/api/posts/([a-f0-9]{32})/reactions', self.path)
+        if reaction_match:
+            return self.react(reaction_match.group(1))
         if self.path == '/api/models':
             return self.create_model()
         if self.path != '/api/jobs':
@@ -764,6 +986,23 @@ class Handler(SimpleHTTPRequestHandler):
                 if (workflow_config or {}).get('pose_count', 4) not in (4, 6, 8):
                     raise ValueError('姿势数量必须是 4、6 或 8')
                 model = model or 'female'
+            elif workflow_type == 'remake':
+                if 'inputImages' in payload:
+                    workflow_config = normalize_remake_config(workflow_config)
+                    model = model or 'female'
+                    if model not in ('female', 'male'):
+                        raise ValueError('请选择模特性别')
+                else:
+                    if not isinstance(workflow_config, dict):
+                        raise ValueError('工作流配置无效')
+                    if workflow_config.get('model_source') not in ('preset', 'work'):
+                        raise ValueError('请选择模特')
+                    if workflow_config['model_source'] == 'preset' and workflow_config.get('model') not in ('female', 'male'):
+                        raise ValueError('请选择模特')
+                    if not isinstance(payload.get('reference'), str):
+                        raise ValueError('请上传参考图')
+                    workflow_config = {'model_source': workflow_config['model_source'], 'model': workflow_config.get('model') or 'female'}
+                    model = workflow_config['model']
             elif workflow_type == 'background_change':
                 if workflow_config and not isinstance(workflow_config, dict):
                     raise ValueError('工作流配置无效')
@@ -826,18 +1065,21 @@ class Handler(SimpleHTTPRequestHandler):
             else:
                 raise ValueError('工作流类型无效')
 
-            if not isinstance(payload.get('image'), str) and not (workflow_type == 'tryon' and 'inputImages' in payload):
+            if not isinstance(payload.get('image'), str) and not (workflow_type in ('tryon', 'remake') and 'inputImages' in payload):
                 raise ValueError('请上传商品图片')
             with connect() as db:
                 previous = db.execute('SELECT * FROM jobs WHERE visitor=? AND idem=?', (visitor, idem)).fetchone()
             if previous:
                 return self.json_out(200, {'job': public_job(previous)})
             prepared_inputs = []
-            if workflow_type == 'tryon':
-                workflow_config, prepared_inputs = prepare_tryon_inputs(payload, visitor)
+            if workflow_type == 'tryon' or (workflow_type == 'remake' and 'inputImages' in payload):
+                workflow_config, prepared_inputs = prepare_tryon_inputs(payload, visitor, workflow_type)
+                if workflow_type == 'remake':
+                    workflow_config['model'] = model
                 image = next(item['bytes'] for item in prepared_inputs if item['role'] in (*GARMENT_ROLES, 'auto'))
             else:
                 image = parse_image(payload['image'])
+            reference = parse_image(payload['reference']) if workflow_type == 'remake' and not prepared_inputs else None
             job_id = uuid4().hex
             input_descriptors = []
             for index, item in enumerate(prepared_inputs, 1):
@@ -866,6 +1108,8 @@ class Handler(SimpleHTTPRequestHandler):
                 data_path(job_id, 'input').write_bytes(image)
                 for index, item in enumerate(prepared_inputs, 1):
                     data_path(job_id, f'input-{index}').write_bytes(item['bytes'])
+                if reference:
+                    data_path(job_id, 'reference').write_bytes(reference)
             except OSError:
                 for kind in ('input', *(f'input-{index}' for index in range(1, len(prepared_inputs) + 1))):
                     data_path(job_id, kind).unlink(missing_ok=True)
@@ -906,7 +1150,7 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.json_out(404, {'error': '作品不存在或尚未完成'})
                 existing = db.execute('SELECT * FROM posts WHERE id=?', (post_id,)).fetchone()
                 if existing:
-                    return self.json_out(200, {'post': public_post(existing, visitor)})
+                    return self.json_out(200, {'post': public_post(existing, visitor, reaction_stats(db, [post_id], visitor)[post_id])})
                 for kind in ('input', 'result'):
                     shutil.copyfile(data_path(post_id, kind), post_path(post_id, kind))
                 db.execute('INSERT INTO posts VALUES (?,?,?,?,?,?)',
@@ -918,6 +1162,28 @@ class Handler(SimpleHTTPRequestHandler):
         except (OSError, sqlite3.Error) as exc:
             print(f'post create failure={type(exc).__name__}')
             return self.json_out(500, {'error': '发布失败，请重试'})
+
+    def react(self, post_id: str):
+        visitor = self.session()
+        try:
+            length = int(self.headers.get('Content-Length', '0'))
+            if length < 1 or length > 256:
+                raise ValueError
+            payload = json.loads(self.rfile.read(length))
+            kind, active = payload.get('kind'), payload.get('active', True)
+            if kind not in REACTIONS or not isinstance(active, bool) or (kind == 'remake' and not active):
+                raise ValueError
+        except (ValueError, AttributeError, json.JSONDecodeError, UnicodeDecodeError):
+            return self.json_out(400, {'error': '操作无效'})
+        with connect() as db:
+            if not db.execute('SELECT 1 FROM posts WHERE id=?', (post_id,)).fetchone():
+                return self.json_out(404, {'error': '社区作品不存在'})
+            if active:
+                db.execute('INSERT OR IGNORE INTO post_reactions VALUES (?,?,?,?)', (post_id, visitor, kind, now()))
+            else:
+                db.execute('DELETE FROM post_reactions WHERE post_id=? AND visitor=? AND kind=?', (post_id, visitor, kind))
+            stats = reaction_stats(db, [post_id], visitor)[post_id]
+        return self.json_out(200, {'stats': stats})
 
     def create_model(self):
         visitor = self.session()
@@ -988,7 +1254,7 @@ class Handler(SimpleHTTPRequestHandler):
                 row = db.execute('SELECT id FROM posts WHERE id=? AND visitor=?', (post_id, visitor)).fetchone()
                 if not row:
                     return self.json_out(404, {'error': '社区作品不存在'})
-                db.execute('DELETE FROM posts WHERE id=? AND visitor=?', (post_id, visitor))
+                delete_post_rows(db, post_id)
             for kind in ('input', 'result'):
                 post_path(post_id, kind).unlink(missing_ok=True)
             return self.json_out(200, {'deleted': True})
@@ -1004,9 +1270,16 @@ class Handler(SimpleHTTPRequestHandler):
             if row['status'] in ('queued', 'running'):
                 return self.json_out(409, {'error': '图片生成中，暂时无法删除'})
             db.execute('DELETE FROM jobs WHERE id=? AND visitor=?', (job_id, visitor))
-        for kind in ('input', 'result', *(f'input-{index}' for index in range(1, MAX_TRYON_INPUTS + 1)), *(f'result-{index}' for index in range(1, MAX_TRYON_OUTPUTS + 1))):
+            published = db.execute('SELECT 1 FROM posts WHERE id=? AND visitor=?', (job_id, visitor)).fetchone()
+            if published:
+                delete_post_rows(db, job_id)
+        for kind in ('input', 'reference', 'result', *(f'input-{index}' for index in range(1, MAX_TRYON_INPUTS + 1)), *(f'result-{index}' for index in range(1, MAX_REMAKE_OUTPUTS + 1))):
             data_path(job_id, kind).unlink(missing_ok=True)
-        return self.json_out(200, {'deleted': True})
+        analysis_path(job_id).unlink(missing_ok=True)
+        if published:
+            for kind in ('input', 'result'):
+                post_path(job_id, kind).unlink(missing_ok=True)
+        return self.json_out(200, {'deleted': True, 'postDeleted': bool(published)})
 
 
 if __name__ == '__main__':

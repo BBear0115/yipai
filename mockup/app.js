@@ -1,6 +1,7 @@
 const app = document.querySelector('#app');
 const dock = document.querySelector('#dock');
 const input = document.querySelector('#file-input');
+const cameraInput = document.querySelector('#camera-input');
 const icons = {
   back: '<path d="m14 5-7 7 7 7"/>',
   arrow: '<path d="M5 12h14m-6-6 6 6-6 6"/>',
@@ -16,14 +17,19 @@ const icons = {
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-6 16-6 16 0"/>',
   check: '<path d="m5 12 4 4L19 6"/>',
   image: '<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1"/><path d="m3 17 6-6 4 4 3-3 5 5"/>',
+  folder: '<path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2.5h8.5A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/>',
   sparkle: '<path d="m12 3 1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3Z"/><path d="m19 16 .9 2.1L22 19l-2.1.9L19 22l-.9-2.1L16 19l2.1-.9L19 16Z"/>',
   thumb: '<path d="M7 10v11H4a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1zm0 0 4-7a2.5 2.5 0 0 1 2.4 3L13 9h5.6a2 2 0 0 1 2 2.4l-1.4 7.5a2.5 2.5 0 0 1-2.5 2.1H7"/>',
   bookmark: '<path d="M6 3.5h12v17l-6-4.5-6 4.5z"/>',
   grid: '<rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
-  warning: '<path d="m12 3 10 18H2zM12 9v5m0 3v1"/>'
+  warning: '<path d="m12 3 10 18H2zM12 9v5m0 3v1"/>',
+  trash: '<path d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3"/>'
 };
-const icon = name => `<svg viewBox="0 0 24 24" aria-hidden="true">${icons[name] || ''}</svg>`;
+const assetIcons = new Set(['feature-shoot', 'feature-remake', 'feature-variations', 'community-like', 'community-bookmark', 'community-share', 'community-save', 'profile-settings', 'profile-bookmarks', 'profile-portfolio']);
+const icon = name => assetIcons.has(name)
+  ? `<i class="asset-icon icon-${name}" aria-hidden="true"></i>`
+  : `<svg viewBox="0 0 24 24" aria-hidden="true">${icons[name] || ''}</svg>`;
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const modelName = value => value === 'male' ? '男模特' : '女模特';
 const isPending = job => ['queued', 'running'].includes(job.status);
@@ -89,11 +95,10 @@ function home() { navigate('#home'); }
 function myPage() { navigate('#my'); }
 function historyPage() { myPage(); void refreshJobs(); }
 function communityPage() { navigate('#community'); }
-function prepare() { navigate('#prepare'); }
+function prepare() { if (draft) navigate('#prepare'); else home(); }
 function resultPage(job) { active = mergeJob(job); navigate(`#job/${job.id}`); }
 function publishPage(job) { active = job; navigate(`#publish/${job.id}`); }
 function openJob(job) { active = mergeJob(job); navigate(`#job/${job.id}`); }
-function recreatePost(post) { if (!post?.productImage) return; draft = post.productImage; resetTryonDraft(draft); prepare(); toast('商品图已载入，选好模特即可开始创作'); }
 function setScreen(value, showDock = false) {
   screen = value; dock.classList.toggle('contextual', !showDock);
   if (value !== 'home') stopHomeCarousel();
@@ -120,21 +125,18 @@ async function renderRoute() {
   if (parts[0] === 'home') { setScreen('home', true); renderCreate(); restore(); return; }
   if (parts[0] === 'my') { setScreen('my', true); renderMy(); restore(); return; }
   if (parts[0] === 'variations') { setScreen('variations'); renderVariations(parts[1]); restore(); return; }
+  if (parts[0] === 'remake') { setScreen('remake'); renderRemake(); restore(); return; }
   if (parts[0] === 'history') {
     setScreen('my', true); renderMy(); restore(); return;
   }
   if (parts[0] === 'prepare') {
+    if (!draft) { navigate('#home', true); toast('请重新选择商品图'); return; }
     renderPrepare(); restore(); return;
   }
   if (parts[0] === 'community') {
     setScreen('community', true); renderCommunity(); restore();
     try { await loadPosts(); if (version === routeVersion) refreshCommunity(); }
     catch (error) { if (version === routeVersion) pageError(error.message, app, communityPage); }
-    return;
-  }
-  if (parts[0] === 'tasks') {
-    await openTasksPage();
-    restore();
     return;
   }
   // Links into the removed workbench (#workflows, #workflow/…, #create/…) land on the matching page.
@@ -174,9 +176,9 @@ function renderUnavailable(message, destination) {
   document.querySelector('#reload-route').onclick = () => void renderRoute();
   document.querySelector('#return-route').onclick = () => navigate(destination);
 }
-function subTop(title, back = home, more = false) {
+function subTop(title, back = home, action = '') {
   // Bind after rendering via bindHeader so callbacks never become inline attributes.
-  return `<header class="sub-top"><button class="icon-button" id="back" aria-label="返回">${icon('back')}</button><h1>${title}</h1>${more ? `<button class="icon-button" id="more" aria-label="更多操作">${icon('more')}</button>` : '<span class="header-spacer"></span>'}</header>`;
+  return `<header class="sub-top"><button class="icon-button" id="back" aria-label="返回">${icon('back')}</button><h1>${title}</h1>${action || '<span class="header-spacer"></span>'}</header>`;
 }
 function bindHeader(back = home) { document.querySelector('#back')?.addEventListener('click', back); }
 
@@ -265,42 +267,71 @@ function startHomeCarousel() {
 }
 function historyCard(job) {
   const title = workflowJobName(job);
-  return `<article class="history-card" data-job-card="${job.id}"><div class="history-open" role="button" tabindex="0" data-job="${job.id}" aria-label="查看${title}，${statusLabel(job)}"><span class="history-photo">${photo(job.image || job.original, '商品创作图片', '', true)}${isPending(job) || job.status === 'failed' ? `<span class="status-badge ${job.status}">${isPending(job) ? '<span class="status-dot"></span>' : ''}${statusLabel(job)}</span>` : ''}</span><span class="card-copy"><strong>${escapeHtml(title)}</strong><time>${escapeHtml(job.date)}</time></span></div></article>`;
+  return `<article class="history-card" data-job-card="${job.id}"><div class="history-open" role="button" tabindex="0" data-job="${job.id}" aria-label="查看${title}，${statusLabel(job)}"><span class="history-photo">${photo(job.image || job.original, '商品创作图片', '', true)}${isPending(job) || job.status === 'failed' ? `<span class="status-badge ${job.status}">${isPending(job) ? '<span class="status-dot"></span>' : ''}${statusLabel(job)}</span>` : job.post ? '<span class="status-badge published">已发布</span>' : ''}</span><span class="card-copy"><time>${escapeHtml(job.date)}</time></span></div></article>`;
+}
+function savedCard(post) {
+  const name = escapeHtml(post.productName);
+  return `<article class="history-card"><div class="history-open" role="button" tabindex="0" data-saved="${escapeHtml(post.id)}" aria-label="查看收藏的${name}"><span class="history-photo">${photo(post.image, `${post.productName}模特效果图`, '', true)}</span><span class="card-copy">${name}</span></div></article>`;
 }
 function bindHistory(root = app) {
   root.querySelectorAll('[data-job]').forEach(el => el.onclick = () => { const job = history.find(item => item.id === el.dataset.job); if (job) openJob(job); });
+  root.querySelectorAll('[data-saved]').forEach(el => el.onclick = () => { const post = findPost(el.dataset.saved); if (post) openViewer(post); });
 }
 const showsJobs = () => screen === 'home' || screen === 'my';
 function renderCreate() {
-  app.innerHTML = `<section class="page home-page">${homeHero()}<div class="home-body">${errorSlot}<div id="active-task"></div><section class="home-action-grid" aria-label="创作入口"><button id="start-create" class="home-action home-action-primary" type="button"><span class="home-action-icon">${icon('camera')}</span><span class="home-action-title">开拍</span><span class="home-action-copy">上传商品图<br>生成模特上身效果</span></button><button id="home-remake" class="home-action home-action-side home-action-remake" type="button"><span class="home-action-title">拍同款</span><span class="home-action-copy">截图心仪的商品图<br>照着生成同款效果</span></button><button id="home-variations" class="home-action home-action-side home-action-variations" type="button"><span class="home-action-title">创意裂变 ${icon('sparkle')}</span><span class="home-action-copy">一张商品图<br>裂变多种场景风格</span></button></section></div></section>`;
+  app.innerHTML = `<section class="page home-page">${homeHero()}<div class="home-body">${errorSlot}<div id="active-task"></div><section class="home-action-grid" aria-label="创作入口"><button id="start-create" class="home-action home-action-primary" type="button"><span class="home-action-icon">${icon('feature-shoot')}</span><span class="home-action-title">开拍</span><span class="home-action-copy">上传商品图<br>生成模特上身效果</span></button><button id="home-remake" class="home-action home-action-side home-action-remake" type="button"><span class="home-action-title">${icon('feature-remake')}拍同款</span><span class="home-action-copy">截图心仪的商品图<br>照着生成同款效果</span></button><button id="home-variations" class="home-action home-action-side home-action-variations" type="button"><span class="home-action-title">${icon('feature-variations')}创意裂变</span><span class="home-action-copy">一张商品图<br>裂变多种场景风格</span></button></section></div></section>`;
   startHomeCarousel();
-  document.querySelector('#home-remake').onclick = communityPage;
+  document.querySelector('#home-remake').onclick = () => navigate('#remake');
   document.querySelector('#home-variations').onclick = () => navigate('#variations');
   viewSignature = ''; updateView();
 }
+let myTab = 'works';
+const myTabs = [['works', '作品', 'profile-portfolio'], ['saved', '收藏', 'profile-bookmarks']];
 function renderMy() {
-  app.innerHTML = `<section class="page my-page"><header class="topbar"><div><span class="eyebrow">个人创作空间</span><h1 class="page-title">我的</h1></div><div class="header-actions"><a class="tasks-link" href="#tasks">任务</a><button class="text-button" id="batch-upload">批量上传</button></div></header><button class="my-profile" id="edit-profile" type="button" aria-label="编辑昵称，当前为${escapeHtml(nickname)}"><span class="small-avatar my-avatar">${escapeHtml(nickname.slice(0, 1))}</span><span class="my-profile-copy"><strong>${escapeHtml(nickname)}</strong><small>编辑昵称</small></span>${icon('arrow')}</button>${errorSlot}<section class="history-section" id="history-section"><div class="section-heading"><h2>创作历史 <span class="count" id="history-count"></span></h2><button class="icon-button" id="refresh-history" aria-label="刷新创作历史">${icon('refresh')}</button></div><div id="history-content"></div></section></section>`;
-  document.querySelector('#batch-upload')?.addEventListener('click', openBatchUpload);
+  const stat = (id, label) => `<div><dt>${label}</dt><dd id="${id}">-</dd></div>`;
+  app.innerHTML = `<section class="page my-page"><header class="my-top"><h1 class="visually-hidden">我的</h1><button class="icon-button" id="my-settings" aria-label="设置">${icon('profile-settings')}</button></header><div class="my-head"><span class="my-avatar" aria-hidden="true">${escapeHtml(nickname.slice(0, 1))}</span><div class="my-name"><strong>${escapeHtml(nickname)}</strong><button class="my-edit" id="edit-profile" type="button" aria-label="编辑昵称，当前为${escapeHtml(nickname)}">编辑</button></div><dl class="my-stats">${stat('stat-works', '作品')}${stat('stat-posts', '已发布')}${stat('stat-likes', '获赞')}</dl></div><div class="my-tabs" role="tablist">${myTabs.map(([key, label, glyph]) => `<button class="my-tab" role="tab" data-my-tab="${key}" aria-selected="${myTab === key}" aria-label="${label}">${icon(glyph)}</button>`).join('')}</div>${errorSlot}<div id="history-content" role="tabpanel"></div></section>`;
+  document.querySelector('#my-settings').onclick = mySettings;
   document.querySelector('#edit-profile').onclick = editProfile;
-  document.querySelector('#refresh-history').onclick = refreshJobs;
+  document.querySelectorAll('[data-my-tab]').forEach(tab => tab.onclick = () => {
+    if (myTab === tab.dataset.myTab) return;
+    myTab = tab.dataset.myTab;
+    document.querySelectorAll('[data-my-tab]').forEach(el => el.setAttribute('aria-selected', String(el === tab)));
+    document.querySelector('#history-content').innerHTML = ''; updateView();
+  });
   viewSignature = ''; updateView();
+  // Stats and the saved tab read community posts, which the feed may not have loaded yet.
+  loadPosts().then(() => updateView(), () => {});
+}
+function mySettings() {
+  sheet('设置', '', [{label:'编辑昵称', action:editProfile}, {label:'取消'}]);
+}
+function updateMyStats() {
+  const mine = posts.filter(post => post.mine);
+  document.querySelector('#stat-works').textContent = jobsLoaded ? history.length : '-';
+  document.querySelector('#stat-posts').textContent = mine.length;
+  document.querySelector('#stat-likes').textContent = mine.reduce((sum, post) => sum + (post.likes || 0), 0);
+}
+function updateSavedCards() {
+  const saved = [...posts, ...examples].filter(isSaved);
+  const container = document.querySelector('#history-content');
+  container.innerHTML = saved.length ? `<div class="history-grid">${saved.map(savedCard).join('')}</div>` : `<div class="empty-history"><p>还没有收藏，在社区看到喜欢的作品可以先存下来。</p><button class="text-button" id="empty-community" type="button">去社区看看 ${icon('arrow')}</button></div>`;
+  container.querySelector('#empty-community')?.addEventListener('click', communityPage);
 }
 function updateView() {
   if (!showsJobs()) return;
-  const signature = JSON.stringify([screen, draft, nickname, history, jobsLoaded, sessionError]);
+  const signature = JSON.stringify([screen, myTab, draft, nickname, history, posts, jobsLoaded, sessionError]);
   if (signature === viewSignature) return;
   viewSignature = signature;
   if (screen === 'home') {
     const start = document.querySelector('#start-create');
-    const hasGarmentDraft = Boolean(draft || (typeof tryonPrimaryImages === 'function' && tryonPrimaryImages().length));
-    start.querySelector('.home-action-copy').textContent = hasGarmentDraft ? '商品图已准备好\n继续完成模特效果' : '上传商品图\n生成模特上身效果';
-    start.querySelector('.home-action-title').textContent = hasGarmentDraft ? '继续创作' : '开拍';
-    start.onclick = prepare;
+    start.querySelector('.home-action-copy').textContent = draft ? '商品图已准备好\n继续完成模特效果' : '上传商品图\n生成模特上身效果';
+    start.querySelector('.home-action-title').textContent = draft ? '继续创作' : '开拍';
+    start.onclick = () => draft ? prepare() : pickImage();
     const pending = sortedJobs().find(isPending);
     document.querySelector('#active-task').innerHTML = pending ? `<button class="task-banner" data-job="${pending.id}"><span class="task-banner-icon"><span class="spinner small"></span></span><span class="task-banner-copy"><strong>${statusLabel(pending)}</strong><small>你的${escapeHtml(workflowJobName(pending))}正在创作，点此查看</small><span class="task-progress" aria-hidden="true"><span></span></span></span>${icon('arrow')}</button>` : '';
   } else {
-    document.querySelector('#history-count').textContent = jobsLoaded ? history.length : '';
-    updateHistoryCards();
+    updateMyStats();
+    if (myTab === 'saved') updateSavedCards(); else updateHistoryCards();
   }
   pageError(sessionError, app, refreshJobs); bindHistory();
   watchImages();
@@ -347,7 +378,8 @@ function selectModel(value) {
   selectedModelId = null;
   tryonDraftRevision++; pendingSubmission = null;
   try { localStorage.setItem('yipai-model', model); localStorage.removeItem('yipai-selected-model-id'); } catch {}
-  if (screen === 'prepare') { renderTryonStudio(); return; }
+  if (screen === 'prepare') { renderPrepare(); return; }
+  if (screen === 'remake') { renderRemake(); return; }
   document.querySelectorAll('[data-model]').forEach(button => {
     const selected = button.dataset.model === model;
     button.classList.toggle('selected', selected); button.setAttribute('aria-pressed', String(selected));
@@ -361,28 +393,54 @@ function modelCards() {
   const selected = allModels.find(m => m.id === selectedModelId) || allModels[0];
   return `<div class="model-chip selected" role="button" tabindex="0" data-open-picker aria-pressed="true">${photo(selected.image, selected.name)}<span class="model-label">${escapeHtml(selected.name)}<span class="model-check">${icon('check')}</span></span></div><button class="text-button" data-change-model>更换模特</button>`;
 }
-function renderPrepare() { renderTryonStudio(); }
+function renderPrepare() {
+  setScreen('prepare');
+  app.innerHTML = `<section class="page detail-page">${subTop('准备开拍')}<div class="prepare-layout"><section class="product-panel"><div class="section-heading"><h2>商品原图</h2><button class="text-button" id="replace">换一张 ${icon('refresh')}</button></div>${photo(draft, '上传的商品图片', 'product-preview')}<p class="muted image-note">商品完整、细节清楚，展示效果更好。</p></section><section class="configuration-panel"><span class="eyebrow">下一步，让商品上身</span><h2>选择出镜模特</h2><p class="muted">选好模特，就可以开始创作。</p><div class="compact-models">${modelCards()}</div>${errorSlot}<div class="bottom-action"><button id="generate" class="primary">生成图片 ${icon('arrow')}</button><p class="helper">一次生成一张，完成后可对照原图查看</p></div></section></div></section>`;
+  bindHeader(); document.querySelector('#replace').onclick = pickImage;
+  document.querySelector('#generate').onclick = () => {
+    void generate(draft, model, selectedModelId ? {modelId:selectedModelId} : {});
+  };
+  document.querySelectorAll('[data-model]').forEach(button => button.onclick = () => selectModel(button.dataset.model));
+  document.querySelector('[data-open-picker]')?.addEventListener('click', openModelPicker);
+  document.querySelector('[data-change-model]')?.addEventListener('click', openModelPicker);
+  watchImages();
+}
 function openModelPicker() {
   const picker = renderModelPicker();
   document.body.appendChild(picker);
 }
+// Workflows that deliver several separate photos, and how many each job expects.
+function photoCount(job) {
+  if (job?.workflowType === 'pose_variation') return job.workflowConfig?.pose_count || 4;
+  if (['tryon','remake'].includes(job?.workflowType)) {
+    const config=job.workflowConfig || {};
+    if (job.workflowType==='tryon' && !config.clothing_mode) return 0;
+    const refs=(job.inputImages || []).filter(item=>item.role==='reference').length;
+    return Math.max(1,refs)*(config.output_count || (job.workflowType==='remake'?3:1));
+  }
+  return 0;
+}
 function poseProgress(job) {
-  if (job?.workflowType === 'pose_variation') {
-    const total = job.workflowConfig?.pose_count || 4;
-    return `已生成 ${Math.min(job.images?.length || 0, total)} / ${total} 张`;
-  }
-  if (job?.workflowType === 'tryon' && job.workflowConfig?.clothing_mode !== 'auto') {
-    const refs = (job.inputImages || []).filter(image=>image.role==='reference').length;
-    const total = Math.max(1,refs) * (job.workflowConfig?.output_count || 1);
-    return `已生成 ${Math.min(job.images?.length || 0,total)} / ${total} 张`;
-  }
-  return '';
+  const total = photoCount(job);
+  if (!total) return '';
+  return `已生成 ${Math.min(job.images?.length || 0, total)} / ${total} 张`;
+}
+let refine = null;
+// Maps a job onto the refine frame: queued holds the coarsest mosaic, running sharpens over time,
+// and each finished pose image pushes the floor so progress is never shown going backwards.
+function refineState(job) {
+  if (!job || job.status === 'queued') return {status:'queued'};
+  const total = photoCount(job);
+  const floor = total ? .25 + .6 * Math.min(1, (job.images?.length || 0) / total) : 0;
+  return {status:'generating', floor, since:new Date(job.created).getTime() || Date.now()};
 }
 function waiting() {
   setScreen('generating');
-  const job = active;
-  app.innerHTML = `<section class="page detail-page">${subTop('正在创作')}<div class="state-panel generation-panel">${job?.original || draft ? photo(job?.original || draft, '正在创作的商品', 'task-product') : ''}<div class="status-line"><span class="spinner small"></span><span class="eyebrow">${job ? escapeHtml(workflowJobName(job)) : modelName(model)}</span></div><h1 id="task-status">${job ? statusLabel(job) : '正在提交'}</h1><p id="task-progress" ${poseProgress(job) ? '' : 'hidden'}>${poseProgress(job)}</p><p>可以离开，完成后在「我的」查看。</p>${errorSlot}<button class="primary" id="leave">返回创作 ${icon('arrow')}</button></div></section>`;
-  bindHeader(); document.querySelector('#leave').onclick = home; watchImages();
+  const job = active, source = job?.original || draft;
+  app.innerHTML = `<section class="page detail-page">${subTop('正在创作')}<div class="state-panel generation-panel">${source ? '<div class="task-preview" id="task-preview"></div>' : ''}<div class="status-line"><span class="eyebrow">${job ? escapeHtml(workflowJobName(job)) : modelName(model)}</span></div><h1 id="task-status">${job ? statusLabel(job) : '正在提交'}</h1><p id="task-progress" ${poseProgress(job) ? '' : 'hidden'}>${poseProgress(job)}</p><p>可以离开，完成后在「我的」查看。</p>${errorSlot}<button class="primary" id="leave">返回创作 ${icon('arrow')}</button></div></section>`;
+  bindHeader(); document.querySelector('#leave').onclick = home;
+  refine = source && typeof refineFrame === 'function' ? refineFrame(document.querySelector('#task-preview'), source, '正在创作的商品') : null;
+  refine?.update(refineState(job));
   if (pollError) pageError(pollError, app, () => void pollJobs());
 }
 function renderJob(job) {
@@ -401,8 +459,14 @@ async function pollJobs() {
     if (active && !history.some(job => job.id === active.id) && screen === 'generating') active = mergeJob((await api(`/api/jobs/${active.id}`)).job);
     else if (active) active = history.find(job => job.id === active.id) || active;
     if (screen === 'generating' && active) {
-      if (!isPending(active)) renderJob(active);
+      if (active.status === 'succeeded' && refine) {
+        const job = active;
+        const title = document.querySelector('#task-status'); if (title) title.textContent = statusLabel(job);
+        refine.reveal(job.images?.[0] || job.image, () => { if (screen === 'generating' && active?.id === job.id) renderJob(job); });
+        refine = null;
+      } else if (!isPending(active)) renderJob(active);
       else {
+        refine?.update(refineState(active));
         const title = document.querySelector('#task-status'); if (title) title.textContent = statusLabel(active);
         const progress = document.querySelector('#task-progress');
         if (progress) { progress.textContent = poseProgress(active); progress.hidden = !progress.textContent; }
@@ -445,13 +509,14 @@ async function generate(source = draft, choice = model, workflow = {}) {
     const workflowConfig = workflow.workflowConfig || null;
     const inputImages = Array.isArray(workflow.inputImages) ? workflow.inputImages : null;
     const modelId = workflow.modelId || null;
-    const submissionKey = JSON.stringify([source, gender, workflowType, workflowConfig, modelId, inputImages]);
+    const submissionKey = JSON.stringify([source, gender, workflowType, workflowConfig, modelId, inputImages,workflow.reference]);
     if (!pendingSubmission || pendingSubmission.key !== submissionKey) pendingSubmission = {source, model:gender, key:submissionKey, idempotencyKey:crypto.randomUUID()};
     const image = await sourceData(source);
     const payload = {image, model:gender, idempotencyKey:pendingSubmission.idempotencyKey};
     if (workflow.workflowType || workflowType !== 'tryon') payload.workflowType = workflowType;
     if (workflowConfig) payload.workflowConfig = workflowConfig;
     if (modelId) payload.modelId = modelId;
+    if (workflow.reference && !inputImages) payload.reference = await sourceData(workflow.reference);
     if (inputImages) payload.inputImages = await Promise.all(inputImages.map(async item => {
       const inputImage = item.image || item.url;
       if (!inputImage) throw new Error('有一张输入图片无法读取，请重新上传。');
@@ -459,26 +524,28 @@ async function generate(source = draft, choice = model, workflow = {}) {
       return {...descriptor, image:await sourceData(inputImage)};
     }));
     const requestBody = JSON.stringify(payload);
-    if (workflowType === 'tryon' && typeof payload.inputImages !== 'undefined') {
+    if (['tryon','remake'].includes(workflowType) && typeof payload.inputImages !== 'undefined') {
       const requestBytes = typeof TextEncoder === 'function' ? new TextEncoder().encode(requestBody).length : unescape(encodeURIComponent(requestBody)).length;
       if (requestBytes > 30 * 1024 * 1024) throw new Error('图片总请求体超过 30 MB，请减少图片数量或重新选择较小的图片。');
     }
     const data = await api('/api/jobs', {method:'POST', body:requestBody});
     const submittedJob = mergeJob(data.job);
     pendingSubmission = null;
-    if (workflowType === 'tryon' && inputImages) {
-      if (currentRoute === submissionRoute && tryonRevision === tryonDraftRevision) { resetTryonDraft(); draft = null; }
+    if (inputImages && ['tryon','remake'].includes(workflowType)) {
+      if (currentRoute === submissionRoute && tryonRevision === tryonDraftRevision) resetTryonDraft();
     } else if (draft === source) draft = null;
     submitting = false; busy = history.some(isPending);
     if (currentRoute === submissionRoute) { active = submittedJob; navigate(`#job/${submittedJob.id}`); }
     else { updateView(); toast('任务已提交，可在「我的」查看'); }
     schedulePoll();
+    return submittedJob;
   } catch (error) {
     submitting = false; busy = history.some(isPending);
     if (currentRoute !== submissionRoute) { toast(error.message || '任务提交失败，请返回查看并重试'); return; }
     // Preserve a newer draft chosen while a previous submission was in flight.
-    if (draft === source || (!draft && tryonRevision === undefined)) { draft = source; model = gender; }
+    if (workflow.workflowType !== 'remake' && (draft === source || (!draft && tryonRevision === undefined))) { draft = source; model = gender; }
     if (screen === 'prepare') renderPrepare();
+    else if (screen === 'remake') renderRemake();
     else if (screen === 'result' && active) renderResult(active);
     else if (screen === 'failed' && active) failedPage(active);
     else { updateView(); }
@@ -491,15 +558,21 @@ function failedPage(job) {
   bindHeader(myPage); document.querySelector('#return-home').onclick = myPage;
   document.querySelector('#retry').onclick = () => { void generate(job.original, job.model, regenerationWorkflow(job)); }; watchImages();
 }
+// What others see of a published work, plus how it is doing.
+function publishedCard(post) {
+  const stat = (value, label) => `<div><dd>${value || 0}</dd><dt>${label}</dt></div>`;
+  return `<section class="published-card" aria-label="已发布到社区"><header><span class="published-tag">${icon('check')}已发布到社区</span><time>${escapeHtml(timeAgo(post.created))}</time></header><h2>${escapeHtml(post.productName)}</h2><p>${escapeHtml(post.note)}</p><dl class="published-stats">${stat(post.likes, '觉得好看')}${stat(post.saves, '收藏')}${stat(post.remakes, '做参考')}</dl><button class="text-button" id="open-post" type="button">在社区查看 ${icon('arrow')}</button></section>`;
+}
 function regenerationWorkflow(job) {
   return {
     workflowType:job.workflowType,
     workflowConfig:job.workflowConfig,
+    reference:job.reference,
     inputImages:Array.isArray(job.inputImages) && job.inputImages.length ? job.inputImages : undefined
   };
 }
 function jobInputLabel(job) {
-  if (job.workflowType === 'tryon') {
+  if (['tryon','remake'].includes(job.workflowType)) {
     const role = job.inputImages?.find(image=>['upper','lower','single'].includes(image.role))?.role;
     return ({upper:'上装原图',lower:'下装原图',single:'连体服装原图'})[role] || '商品原图';
   }
@@ -509,26 +582,28 @@ function renderResult(job) {
   setScreen('result');
   const outputTitle = workflowJobName(job);
   const outputMeta = job.workflowType && job.workflowType !== 'tryon' ? workflowJobName(job) : modelName(job.model);
-  const poseImages = ['pose_variation','tryon'].includes(job.workflowType) && Array.isArray(job.images) && job.images.length
+  const poseImages = photoCount(job) && Array.isArray(job.images) && job.images.length
     ? job.images.map(image => typeof image === 'string' ? image : image?.url).filter(Boolean)
     : [job.image].filter(Boolean);
   let selectedPoseIndex = 0;
   const inputLabel = jobInputLabel(job);
+  const photoLabel = job.workflowType === 'remake' ? '拍同款' : job.workflowType === 'tryon' ? '虚拟试穿' : '姿势裂变';
   const previewNotice = job.previewOnly && job.workflowType === 'background_change'
     ? '<p class="preview-output-notice" role="status">这是一条旧的演示样例记录，未处理输入图片。点击重新生成可重新提交原图。</p>'
     : '';
-  const hasPoseGallery = ['pose_variation','tryon'].includes(job.workflowType) && poseImages.length > 1;
-  const galleryLabel = job.workflowType === 'tryon' ? '虚拟试穿' : '姿势裂变';
-  const downloadLabel = job.workflowType === 'tryon' ? '试穿结果' : '姿势裂变';
-  const poseGallery = hasPoseGallery ? `<div class="pose-gallery" aria-label="${galleryLabel}图片">
-    <p class="pose-gallery-count" aria-live="polite">第 <span id="pose-result-index">1</span> 张 / 共 ${poseImages.length} 张独立图片</p>
-    <div class="pose-gallery-thumbnails" role="group" aria-label="选择${galleryLabel}图片">
-      ${poseImages.map((image, index) => `<button class="pose-gallery-thumb ${index === 0 ? 'selected' : ''}" type="button" data-pose-image="${index}" aria-label="查看第 ${index + 1} 张图片" aria-pressed="${index === 0}"><img src="${escapeHtml(image)}" alt="${galleryLabel}第 ${index + 1} 张" decoding="async"><span>${index + 1}</span></button>`).join('')}
+  const hasPoseGallery = Boolean(photoCount(job)) && poseImages.length > 1;
+  const poseGallery = hasPoseGallery ? `<div class="pose-gallery" aria-label="${photoLabel}图片">
+    <div class="pose-gallery-head"><p class="pose-gallery-count" aria-live="polite">第 <span id="pose-result-index">1</span> 张 / 共 ${poseImages.length} 张独立图片</p><button class="text-button" id="save-all" type="button">${icon('save')}下载全部 ${poseImages.length} 张</button></div>
+    <div class="pose-gallery-thumbnails" role="group" aria-label="选择${photoLabel}图片">
+      ${poseImages.map((image, index) => `<button class="pose-gallery-thumb ${index === 0 ? 'selected' : ''}" type="button" data-pose-image="${index}" aria-label="查看第 ${index + 1} 张图片" aria-pressed="${index === 0}"><img src="${escapeHtml(image)}" alt="${photoLabel}第 ${index + 1} 张" decoding="async"><span>${index + 1}</span></button>`).join('')}
     </div>
   </div>` : '';
-  const poseActions = hasPoseGallery ? `<button class="action-button" id="save-all">${icon('save')}<span>下载全部${downloadLabel} ${poseImages.length} 张</span></button>` : '';
-  app.innerHTML = `<section class="page detail-page result-page">${subTop('你的新作品', myPage, true)}<div class="result-layout"><div class="result-main"><div class="result-toolbar"><div class="segmented" aria-label="图片对照"><button class="selected" id="effect-tab" aria-pressed="true">效果图</button><button id="original-tab" aria-pressed="false">${inputLabel}</button></div><button class="icon-button" id="zoom-result" aria-label="放大查看图片">${icon('zoom')}</button></div><div class="comparison-grid"><div class="result-image-column"><span class="desktop-image-label">${escapeHtml(outputTitle)}${hasPoseGallery ? ' · <span id="pose-result-label">1</span> / ' + poseImages.length : ''}</span>${poseGallery}<div id="result-primary" role="button" tabindex="0" aria-label="全屏查看效果图">${photo(poseImages[0], hasPoseGallery ? `${galleryLabel}第 1 张` : '带衣拍水印的模特展示图', 'result-art')}</div></div><div class="desktop-original"><span class="desktop-image-label">${inputLabel}</span><div role="button" tabindex="0" id="result-original" aria-label="全屏查看${inputLabel}">${photo(job.original, inputLabel, 'result-art')}</div></div></div></div><aside class="result-side"><div class="result-summary"><span class="eyebrow">完成这一次创作</span><h2>让细节，也经得起看。</h2><p>发布前，对照原图检查颜色、图案和商品结构。</p>${previewNotice}<span class="result-meta">${escapeHtml(outputMeta)} · ${escapeHtml(job.date)}</span></div>${errorSlot}<div class="result-actions ${hasPoseGallery ? 'pose-result-actions' : ''}"><button class="action-button" id="regenerate">${icon('refresh')}<span>重新生成</span></button><button class="action-button primary-action" id="save">${icon('save')}<span>保存当前图片</span></button><button class="action-button" id="share">${icon('share')}<span>分享转发</span></button>${poseActions}</div></aside></div></section>`;
+  // The comparison toggle floats over the image on frosted glass; the actions sit in a glass bar pinned to the bottom.
+  app.innerHTML = `<section class="page detail-page result-page">${subTop('你的新作品', myPage, `<button class="icon-button" id="delete-job" aria-label="删除作品">${icon('trash')}</button>`)}<div class="result-layout"><div class="result-main"><div class="comparison-grid"><div class="result-image-column"><span class="desktop-image-label">${escapeHtml(outputTitle)}${hasPoseGallery ? ' · <span id="pose-result-label">1</span> / ' + poseImages.length : ''}</span><div class="result-stage"><div id="result-primary" role="button" tabindex="0" aria-label="全屏查看效果图">${photo(poseImages[0], hasPoseGallery ? `${photoLabel}第 1 张` : '带衣拍水印的模特展示图', 'result-art')}</div><div class="segmented glass" aria-label="图片对照"><button class="selected" id="effect-tab" aria-pressed="true">效果图</button><button id="original-tab" aria-pressed="false">${inputLabel}</button></div></div>${poseGallery}</div><div class="desktop-original"><span class="desktop-image-label">${inputLabel}</span><div role="button" tabindex="0" id="result-original" aria-label="全屏查看${inputLabel}">${photo(job.original, inputLabel, 'result-art')}</div></div></div></div><aside class="result-side"><div class="result-summary"><span class="eyebrow">完成这一次创作</span><h2>让细节，也经得起看。</h2>${job.post ? publishedCard(job.post) : '<p>发布前，对照原图检查颜色、图案和商品结构。</p>'}${job.reference ? `<div class="remake-reference" id="result-reference" role="button" tabindex="0" aria-label="查看参考图">${photo(job.reference, '参考图')}<span class="remake-reference-copy">参考图<small>点击放大，对照拍法</small></span></div>` : ''}${previewNotice}<span class="result-meta">${escapeHtml(outputMeta)} · ${escapeHtml(job.date)}</span></div>${errorSlot}<div class="result-actions"><button class="action-button glass" id="regenerate">${icon('refresh')}<span>重新生成</span></button><button class="action-button glass primary-action" id="save">${icon('save')}<span>保存图片</span></button><button class="action-button glass round-action" id="share" aria-label="分享转发">${icon('share')}</button></div></aside></div></section>`;
   bindHeader(myPage); let showingOriginal = false;
+  document.querySelector('#delete-job').onclick = () => confirmDelete(job);
+  document.querySelector('#open-post')?.addEventListener('click', communityPage);
+  document.querySelector('#result-reference')?.addEventListener('click', () => openViewer({image:job.reference, original:job.original}, false, '参考图'));
   const selectedResult = () => hasPoseGallery ? {...job, image: poseImages[selectedPoseIndex], imageIndex: selectedPoseIndex + 1} : job;
   const choose = original => {
     showingOriginal = original;
@@ -538,12 +613,11 @@ function renderResult(job) {
     document.querySelector('#original-tab').setAttribute('aria-pressed', String(original));
     const primary = document.querySelector('#result-primary');
     primary.setAttribute('aria-label', `全屏查看${original ? inputLabel : '效果图'}`);
-    primary.innerHTML = photo(original ? job.original : poseImages[selectedPoseIndex], original ? inputLabel : hasPoseGallery ? `${galleryLabel}第 ${selectedPoseIndex + 1} 张` : '带衣拍水印的模特展示图', 'result-art'); watchImages(primary);
+    primary.innerHTML = photo(original ? job.original : poseImages[selectedPoseIndex], original ? inputLabel : hasPoseGallery ? `${photoLabel}第 ${selectedPoseIndex + 1} 张` : '带衣拍水印的模特展示图', original ? 'result-art result-input' : 'result-art'); watchImages(primary);
   };
   document.querySelector('#effect-tab').onclick = () => choose(false);
   document.querySelector('#original-tab').onclick = () => choose(true);
   const view = () => openViewer(showingOriginal ? job : selectedResult(), showingOriginal);
-  document.querySelector('#zoom-result').onclick = view;
   document.querySelector('#result-primary').onclick = view;
   document.querySelector('#result-primary').onkeydown = event => { if (['Enter',' '].includes(event.key)) { event.preventDefault(); view(); } };
   document.querySelector('#result-original').onclick = () => openViewer(job, true);
@@ -565,13 +639,12 @@ function renderResult(job) {
     document.querySelector('#save-all').onclick = () => {
       const link = document.createElement('a');
       link.href = job.downloadAll || `/api/jobs/${job.id}/download.zip`;
-      link.download = `衣拍-${job.id}-全部${galleryLabel}.zip`;
+      link.download = `衣拍-${job.id}-全部${photoLabel}.zip`;
       document.body.appendChild(link); link.click(); link.remove();
       toast('已发起全部图片下载');
     };
   }
   document.querySelector('#share').onclick = () => shareOptions(selectedResult());
-  document.querySelector('#more').onclick = () => sheet('作品操作', '', [{label:'发布到社区', action:() => publishPage(job)}, {label:'删除这张作品', danger:true, action:() => confirmDelete(job)}, {label:'取消'}]);
   watchImages();
 }
 function save(result) {
@@ -614,6 +687,14 @@ function closeOverlay(restoreFocus = true) {
   document.querySelector('.modal-backdrop')?.remove(); document.body.classList.remove('overlay-open'); app.inert = false; dock.inert = false;
   if (restoreFocus && overlayTrigger?.isConnected) overlayTrigger.focus(); overlayTrigger = null;
 }
+// Lets the user shoot the product now or choose existing photos; picking several from the library opens batch creation.
+function pickImage() {
+  const layer = openOverlay(`<section class="sheet pick-sheet" role="dialog" aria-modal="true" aria-labelledby="pick-title"><div class="sheet-heading"><h2 id="pick-title">添加商品图</h2><button class="icon-button" data-close aria-label="关闭">${icon('close')}</button></div><div class="pick-options"><button class="pick-option" type="button" data-pick="camera"><span class="pick-icon">${icon('camera')}</span><strong>拍照</strong><small>用相机拍摄商品</small></button><button class="pick-option" type="button" data-pick="library"><span class="pick-icon">${icon('folder')}</span><strong>相册 / 文件</strong><small>选择已有的图片</small><span class="pick-badge">可多选 · 最多 10 张</span></button></div></section>`);
+  layer.querySelectorAll('[data-pick]').forEach(button => button.onclick = () => {
+    closeOverlay(false);
+    (button.dataset.pick === 'camera' ? cameraInput : input).click();
+  });
+}
 function sheet(title, body, buttons) {
   const layer = openOverlay(`<section class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title"><div class="sheet-heading"><h2 id="sheet-title">${escapeHtml(title)}</h2><button class="icon-button" data-close aria-label="关闭">${icon('close')}</button></div>${body ? `<p>${escapeHtml(body)}</p>` : ''}<div class="sheet-actions stacked">${buttons.map((button, index) => `<button class="${button.filled ? 'primary' : 'secondary'} ${button.danger ? 'danger' : ''}" data-index="${index}">${escapeHtml(button.label)}</button>`).join('')}</div>${errorSlot}</section>`);
   layer.querySelectorAll('[data-index]').forEach(el => el.onclick = async () => {
@@ -621,14 +702,14 @@ function sheet(title, body, buttons) {
     if (action) { try { await action(); } catch (error) { pageError(error.message); } }
   });
 }
-function openViewer(item, original = false) {
+function openViewer(item, original = false, effectLabel = '效果图') {
   let showingOriginal = original, zoom = 1;
-  const inputLabel = item.workflowType && item.workflowType !== 'tryon' ? '输入图片' : '商品原图';
-  const layer = openOverlay(`<section class="viewer" role="dialog" aria-modal="true" aria-label="图片查看器"><header class="viewer-header"><div class="segmented"><button id="viewer-effect" aria-pressed="${!original}">效果图</button><button id="viewer-original" aria-pressed="${original}">${inputLabel}</button></div><button class="icon-button" data-close aria-label="关闭图片查看器">${icon('close')}</button></header><div class="viewer-stage" tabindex="0" aria-label="图片查看区域，可滚动查看放大细节"><div class="viewer-canvas"></div></div><footer class="viewer-controls"><button class="secondary" id="zoom-out" aria-label="缩小图片">−</button><output id="zoom-level" aria-live="polite">100%</output><button class="secondary" id="zoom-in" aria-label="放大图片">＋</button><button class="secondary" id="zoom-reset">还原</button></footer></section>`, 'viewer-backdrop');
+  const inputLabel = item.workflowType && !['tryon', 'remake'].includes(item.workflowType) ? '输入图片' : '商品原图';
+  const layer = openOverlay(`<section class="viewer" role="dialog" aria-modal="true" aria-label="图片查看器"><header class="viewer-header"><div class="segmented"><button id="viewer-effect" aria-pressed="${!original}">${escapeHtml(effectLabel)}</button><button id="viewer-original" aria-pressed="${original}">${inputLabel}</button></div><button class="icon-button" data-close aria-label="关闭图片查看器">${icon('close')}</button></header><div class="viewer-stage" tabindex="0" aria-label="图片查看区域，可滚动查看放大细节"><div class="viewer-canvas"></div></div><footer class="viewer-controls"><button class="secondary" id="zoom-out" aria-label="缩小图片">−</button><output id="zoom-level" aria-live="polite">100%</output><button class="secondary" id="zoom-in" aria-label="放大图片">＋</button><button class="secondary" id="zoom-reset">还原</button></footer></section>`, 'viewer-backdrop');
   const update = () => {
     layer.querySelector('#viewer-effect').classList.toggle('selected', !showingOriginal); layer.querySelector('#viewer-original').classList.toggle('selected', showingOriginal);
     layer.querySelector('#viewer-effect').setAttribute('aria-pressed', String(!showingOriginal)); layer.querySelector('#viewer-original').setAttribute('aria-pressed', String(showingOriginal));
-    layer.querySelector('.viewer-canvas').innerHTML = photo(showingOriginal ? (item.original || item.productImage) : item.image, showingOriginal ? inputLabel : '带水印的效果图');
+    layer.querySelector('.viewer-canvas').innerHTML = photo(showingOriginal ? (item.original || item.productImage) : item.image, showingOriginal ? inputLabel : effectLabel === '效果图' ? '带水印的效果图' : effectLabel);
     layer.querySelector('.viewer-canvas').style.setProperty('--zoom', zoom);
     layer.querySelector('#zoom-level').textContent = `${Math.round(zoom * 100)}%`;
     layer.querySelector('#zoom-out').disabled = zoom <= 1; layer.querySelector('#zoom-in').disabled = zoom >= 3;
@@ -646,15 +727,25 @@ function openViewer(item, original = false) {
     else if (['ArrowLeft','ArrowRight'].includes(event.key)) { showingOriginal = !showingOriginal; zoom = 1; update(); }
   }); update();
 }
+// A published work asks twice: deleting it also takes down its community post.
 function confirmDelete(job) {
-  sheet('删除这张作品？', '删除后无法在创作历史找回。已发布内容需在社区单独撤回。', [{label:'保留'}, {label:'确认删除', danger:true, action:async () => {
-    await api(`/api/jobs/${job.id}`, {method:'DELETE'}); history = history.filter(item => item.id !== job.id); active = null; myPage(); toast('作品已删除');
+  const remove = async () => {
+    await api(`/api/jobs/${job.id}`, {method:'DELETE'});
+    history = history.filter(item => item.id !== job.id); posts = posts.filter(post => post.id !== job.id); active = null;
+    myPage(); toast(job.post ? '作品和社区帖子已删除' : '作品已删除');
+  };
+  sheet('删除这张作品？', '删除后无法在创作历史找回。', [{label:'取消'}, {label:'删除', danger:true, action:() => {
+    if (!job.post) return remove();
+    sheet('这张作品已发布到社区', `删除作品会同时删除社区里的「${job.post.productName}」帖子，${job.post.likes || job.post.saves ? '已有的好看和收藏也会一起清空。' : '其他人将无法再看到它。'}`, [{label:'取消'}, {label:'删除作品和帖子', danger:true, action:remove}]);
   }}]);
 }
 
 let uploadVersion = 0;
-input.onchange = async () => {
-  const file = input.files[0]; input.value = ''; if (!file) return;
+input.onchange = cameraInput.onchange = async event => {
+  const source = event?.target || input;
+  const files = [...source.files]; source.value = '';
+  if (files.length > 1) { openBatchUpload(files); return; }
+  const file = files[0]; if (!file) return;
   const version = ++uploadVersion;
   if (file.size > 20 * 1024 * 1024) { pageError('图片不能超过 20 MB，请换一张'); return; }
   try {
@@ -663,10 +754,10 @@ input.onchange = async () => {
     if (version !== uploadVersion) return;
     const canvas = document.createElement('canvas'); const scale = Math.min(1, 1200 / Math.max(img.width, img.height));
     canvas.width = Math.round(img.width * scale); canvas.height = Math.round(img.height * scale);
-    if (Math.min(canvas.width, canvas.height) < 512) throw new Error('图片尺寸过小，请换一张清楚的图片');
+    if (Math.min(canvas.width, canvas.height) < 256) throw new Error(`图片为 ${img.width} × ${img.height} 像素，宽和高需至少 256 像素`);
     canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-    draft = canvas.toDataURL('image/jpeg', .85); resetTryonDraft(draft); pendingSubmission = null; prepare();
-  } catch { if (version === uploadVersion) pageError('无法读取图片或尺寸不足，请换一张清楚的 JPG、PNG 或 WebP 图片'); }
+    draft = canvas.toDataURL('image/jpeg', .85); pendingSubmission = null; prepare();
+  } catch (error) { if (version === uploadVersion) { const message=error.message || '无法读取图片，请换一张清楚的 JPG、PNG 或 WebP 图片'; pageError(message); toast(message); } }
 };
 document.querySelector('#create-tab').onclick = home;
 document.querySelector('#my-tab').onclick = historyPage;

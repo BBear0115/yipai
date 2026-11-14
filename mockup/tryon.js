@@ -11,9 +11,10 @@ function freshTryonDraft(image = null) {
     garments: {upper:image, lower:null, single:null},
     references: [],
     modelImage: null,
+    modelFromWork: false,
     detailsEnabled: false,
     details: {upper:[], lower:[], single:[]},
-    outputCount: 1,
+    outputCount: 3,
     instruction: ''
   };
 }
@@ -22,6 +23,7 @@ function resetTryonDraft(image) {
   tryonDraftState = freshTryonDraft(image);
   tryonDraftRevision++;
   pendingSubmission = null;
+  if (typeof remakeReferencePosts !== 'undefined') remakeReferencePosts.clear();
 }
 
 function tryonPrimaryImages(state = tryonDraftState) {
@@ -46,7 +48,7 @@ function buildTryonWorkflow(state = tryonDraftState) {
   const inputImages = collectTryonInputImages(state);
   const firstGarment = inputImages.find(image => ['upper','lower','single'].includes(image.role));
   return {
-    workflowType:'tryon',
+    workflowType:'remake',
     workflowConfig:{clothing_mode:state.clothingMode, output_count:state.outputCount, instruction:state.instruction.trim().slice(0,500)},
     inputImages,
     modelId:state.modelImage ? null : selectedModelId,
@@ -90,6 +92,7 @@ function tryonGarmentSlot(role, label, hint) {
     <div class="tryon-slot-heading"><div><h3>${label}</h3><p>${hint}</p></div>${image ? `<button class="text-button" type="button" data-tryon-remove="${role}">移除</button>` : ''}</div>
     ${image ? `<div class="tryon-garment-preview">${photo(image, `${label}商品图`)}<span>${label}已上传</span></div>` : `<div class="tryon-empty-slot"><span>${icon('image')}</span><span>上传${label}商品图</span></div>`}
     <button class="secondary tryon-upload-button" type="button" data-tryon-upload="garment" data-role="${role}">${image ? '更换图片' : `上传${label}`} ${icon(image ? 'refresh' : 'plus')}</button>
+    <div class="tryon-source-actions"><button class="text-button" type="button" data-tryon-camera="garment" data-role="${role}">拍照 ${icon('camera')}</button><button class="text-button" type="button" data-remake-work-picker="garment" data-role="${role}">从作品选择</button></div>
     ${tryonUploadFeedbackMarkup('garment', role)}
     <p class="tryon-help" data-tryon-resolution>支持 PNG / JPG / WebP；宽高至少 256 像素，单张不超过 20 MB。</p>
     ${tryonDraftState.detailsEnabled ? `<div class="tryon-slot-details"><div class="tryon-detail-heading"><strong>这件服装的细节图</strong><span>${details.length} / ${TRYON_MAX_DETAILS}</span></div><p>${image ? '仅补充面料、口袋、纽扣等局部，不会改变人物或场景。' : `先上传${label}商品图，再添加对应细节。`}</p><div class="tryon-thumbs">${details.map((detail,index)=>tryonPreview(detail, `${label}细节 ${index+1}`, `detail:${role}:${index}`, '移除')).join('')}</div><button class="text-button" type="button" data-tryon-upload="detail" data-role="${role}" ${!image || tryonDetailCount() >= TRYON_MAX_DETAILS ? 'disabled' : ''}>添加细节图 ${icon('plus')}</button>${tryonUploadFeedbackMarkup('detail', role)}</div>` : ''}
@@ -97,26 +100,26 @@ function tryonGarmentSlot(role, label, hint) {
 }
 
 function renderTryonStudio() {
-  setScreen('prepare');
+  setScreen('remake');
   const state = tryonDraftState;
-  draft = tryonPrimaryImages(state)[0]?.image || Object.values(state.garments).find(Boolean) || null;
   const isMulti = state.clothingMode === 'multi';
   const refs = state.references;
-  const directModel = state.modelImage && !selectedModelId;
+  const directModel = Boolean(state.modelImage);
   const chosenLibraryModel = selectedModelId ? allModels.find(item => item.id === selectedModelId) : null;
   const activeGarments = isMulti ? ['upper','lower'] : ['single'];
   const garmentImages = tryonPrimaryImages(state);
   const detailsCount = tryonDetailCount(state);
   const modelContent = directModel
-    ? `<div class="tryon-model-preview">${photo(state.modelImage, '自定义模特照片')}<div><strong>自定义人物参考</strong><p>只用于人物身份，不决定服装或场景。</p></div><button class="text-button" type="button" data-tryon-remove="model">移除</button></div>`
+    ? `<div class="tryon-model-preview">${photo(state.modelImage, '自定义模特照片')}<div><strong>${state.modelFromWork?'沿用作品中的人物':'自定义人物参考'}</strong><p>只用于人物身份，不决定服装或场景。</p></div><button class="text-button" type="button" data-tryon-remove="model">移除</button></div>`
     : chosenLibraryModel
       ? `<div class="tryon-model-preview">${photo(chosenLibraryModel.image, chosenLibraryModel.name)}<div><strong>${escapeHtml(chosenLibraryModel.name)}</strong><p>模特照片只用于人物身份。</p></div><button class="text-button" type="button" data-clear-library-model>取消选择</button></div>`
-      : `<div class="tryon-identity-note">不指定模特时：上传参考图会沿用参考人物；无参考图则使用所选性别的默认人物。</div>`;
+      : `<div class="tryon-identity-note">默认使用所选性别的模特；参考照片只提供拍法，不会照搬其中的人物。</div>`;
   const refsMarkup = refs.length
     ? `<div class="tryon-thumbs">${refs.map((image,index)=>tryonPreview(image, `参考图 ${index+1}`, `reference:${index}`)).join('')}</div>`
-    : `<div class="tryon-empty-slot tryon-reference-empty"><span>${icon('image')}</span><span>可选：上传参考图控制姿势、场景和光线</span></div>`;
+    : `<div class="tryon-empty-slot tryon-reference-empty"><span>${icon('image')}</span><span>先添加一张喜欢的参考照片，或从已有作品选择</span></div>`;
   app.innerHTML = `<section class="page detail-page tryon-page">
-    ${subTop('虚拟试穿', home)}
+    ${subTop('拍同款', home)}
+    <p class="tryon-page-caption">照着喜欢的照片，让模特穿上你的商品。参考照片用于构图、姿势、场景和光线，每张分别输出独立成片。</p>
     <div class="tryon-layout">
       <div class="tryon-main-column">
         <section class="tryon-card tryon-garments-card">
@@ -128,8 +131,9 @@ function renderTryonStudio() {
           <div class="tryon-garment-grid">${activeGarments.map(role => role === 'upper' ? tryonGarmentSlot(role,'上装','上衣、外套等') : role === 'lower' ? tryonGarmentSlot(role,'下装','裤子、裙装等') : tryonGarmentSlot(role,'连体 / 全身','连衣裙、连体衣等')).join('')}</div>
         </section>
         <section class="tryon-card">
-          <div class="tryon-section-heading"><div><span class="eyebrow">画面控制</span><h2>参考照片 <span class="tryon-count">${refs.length} / ${TRYON_MAX_REFERENCES}</span></h2><p>每张参考图独立生成；它控制姿势、构图、背景、光线和未被商品覆盖的穿搭。</p></div><button class="secondary" type="button" data-tryon-upload="reference" ${refs.length>=TRYON_MAX_REFERENCES?'disabled':''}>添加参考图 ${icon('plus')}</button></div>
+          <div class="tryon-section-heading"><div><span class="eyebrow">画面控制</span><h2>参考照片 <span class="tryon-count">${refs.length} / ${TRYON_MAX_REFERENCES}</span></h2><p>先分析参考照片的构图、姿势、场景与光线，再结合你的商品重拍。截图中的界面、价格和文字会被忽略。</p></div><button class="secondary" type="button" data-tryon-upload="reference" ${refs.length>=TRYON_MAX_REFERENCES?'disabled':''}>添加参考图 ${icon('plus')}</button></div>
           ${refsMarkup}
+          <div class="tryon-source-actions"><button class="text-button" type="button" data-tryon-camera="reference">拍摄参考照 ${icon('camera')}</button><button class="text-button" type="button" data-remake-work-picker="reference">从作品选择 ${icon('image')}</button></div>
           ${tryonUploadFeedbackMarkup('reference')}
         </section>
         <section class="tryon-card">
@@ -148,17 +152,17 @@ function renderTryonStudio() {
         </section>
         <section class="tryon-card">
           <div class="tryon-section-heading"><div><span class="eyebrow">生成方案</span><h2>每组输出</h2></div></div>
-          <div class="tryon-count-options">${[1,2].map(count=>`<button type="button" data-output-count="${count}" class="${state.outputCount===count?'selected':''}" aria-pressed="${state.outputCount===count}">${count} 张</button>`).join('')}</div>
-          <p class="tryon-help">${refs.length ? `${refs.length} 张参考图 × 每组 ${state.outputCount} 张` : `无参考图，智能搭配生成 ${state.outputCount} 张`}；预计共 ${tryonTotalOutputCount(state)} 张。</p>
+          <div class="tryon-count-options">${[1,2,3].map(count=>`<button type="button" data-output-count="${count}" class="${state.outputCount===count?'selected':''}" aria-pressed="${state.outputCount===count}">${count} 张</button>`).join('')}</div>
+          <p class="tryon-help">${refs.length ? `${refs.length} 张参考图 × 每组 ${state.outputCount} 张` : '先添加参考照片'}；预计共 ${tryonTotalOutputCount(state)} 张。</p>
         </section>
         <section class="tryon-card">
           <label class="field-label" for="tryon-instruction">补充搭配要求 <span class="tryon-optional">可选 · 最多 500 字</span></label>
           <textarea id="tryon-instruction" class="field-input" maxlength="500" placeholder="例如：搭配简洁的浅色鞋履，整体适合春季通勤。">${escapeHtml(state.instruction)}</textarea>
-          <p class="tryon-help">有参考图时保留参考图中未覆盖的穿搭；无参考图时由 AI 协调补齐，不照搬默认模特的裤子和鞋。</p>
+          <p class="tryon-help">参考照片提供拍摄气质，其余穿搭会围绕你的商品协调搭配。商品本身的颜色、图案与结构优先保留。</p>
           <p class="tryon-character-count"><span id="tryon-instruction-count">${state.instruction.length}</span> / 500</p>
         </section>
         <div class="tryon-submit-error" id="tryon-submit-error" role="alert" hidden></div>
-        <div class="bottom-action tryon-bottom-action"><button id="generate" class="primary" type="button" ${garmentImages.length?'':'disabled'}>生成 ${tryonTotalOutputCount(state)} 张图片 ${icon('arrow')}</button><p class="helper">所有服装、参考和细节图片会按用途分别处理。</p></div>
+        <div class="bottom-action tryon-bottom-action"><button id="generate" class="primary" type="button" ${garmentImages.length && refs.length?'':'disabled'}>生成 ${tryonTotalOutputCount(state)} 张图片 ${icon('arrow')}</button><p class="helper">${refs.length ? '商品、参考和细节图片会按用途分别处理。' : '请先添加参考照片，再上传至少一件商品。'}</p></div>
       </aside>
     </div>
     ${errorSlot}
@@ -167,11 +171,13 @@ function renderTryonStudio() {
   app.querySelectorAll('[data-clothing-mode]').forEach(button=>button.onclick=()=>{state.clothingMode=button.dataset.clothingMode; tryonDraftRevision++; pendingSubmission=null; renderTryonStudio();});
   app.querySelectorAll('[data-output-count]').forEach(button=>button.onclick=()=>{state.outputCount=Number(button.dataset.outputCount); tryonDraftRevision++; pendingSubmission=null; renderTryonStudio();});
   app.querySelectorAll('[data-tryon-upload]').forEach(button=>button.onclick=()=>openTryonFilePicker(button.dataset.tryonUpload,button.dataset.role));
+  app.querySelectorAll('[data-tryon-camera]').forEach(button=>button.onclick=()=>openTryonFilePicker(button.dataset.tryonCamera,button.dataset.role,true));
+  app.querySelectorAll('[data-remake-work-picker]').forEach(button=>button.onclick=()=>openRemakeWorkPicker(button.dataset.remakeWorkPicker,button.dataset.role));
   app.querySelectorAll('[data-tryon-remove]').forEach(button=>button.onclick=()=>removeTryonInput(button.dataset.tryonRemove));
   app.querySelector('#tryon-details-toggle').onchange=event=>{state.detailsEnabled=event.target.checked; tryonDraftRevision++; pendingSubmission=null; renderTryonStudio();};
   app.querySelector('[data-open-picker]').onclick=openModelPicker;
   app.querySelector('[data-clear-library-model]')?.addEventListener('click',()=>{selectedModelId=null; try{localStorage.removeItem('yipai-selected-model-id');}catch{} renderTryonStudio();});
-  app.querySelectorAll('[data-model]').forEach(button=>button.onclick=()=>selectModel(button.dataset.model));
+  app.querySelectorAll('[data-model]').forEach(button=>button.onclick=()=>{state.modelImage=null;state.modelFromWork=false;selectModel(button.dataset.model);});
   app.querySelector('#tryon-instruction').oninput=event=>{
     state.instruction=event.target.value.slice(0,500);
     tryonDraftRevision++; pendingSubmission=null;
@@ -191,13 +197,14 @@ function renderTryonStudio() {
   });
 }
 
-function openTryonFilePicker(kind, role) {
+function openTryonFilePicker(kind, role, camera = false) {
   const revision=tryonDraftRevision;
   const route=currentRoute;
   const viewVersion=routeVersion;
   const picker = document.createElement('input');
   picker.type='file'; picker.accept='image/jpeg,image/png,image/webp';
-  picker.multiple=kind==='reference' || kind==='detail';
+  picker.multiple=!camera && (kind==='reference' || kind==='detail');
+  if (camera) picker.setAttribute('capture','environment');
   picker.onchange=async()=>{
     const files=Array.from(picker.files||[]);
     picker.remove();
@@ -245,12 +252,12 @@ async function addTryonFiles(kind, role, files, expectedRevision=tryonDraftRevis
   if (['garment','model'].includes(kind) && files.length!==1) throw new Error('请一次选择一张图片。');
   const normalized=[];
   for (const file of files) normalized.push(await normalizeTryonFile(file,kind));
-  if (expectedRevision!==tryonDraftRevision || expectedRoute!==currentRoute || expectedViewVersion!==routeVersion || screen!=='prepare' || state!==tryonDraftState) return false;
+  if (expectedRevision!==tryonDraftRevision || expectedRoute!==currentRoute || expectedViewVersion!==routeVersion || screen!=='remake' || state!==tryonDraftState) return false;
   const next={...state, garments:{...state.garments}, references:[...state.references], details:{upper:[...state.details.upper],lower:[...state.details.lower],single:[...state.details.single]}};
   if (kind==='garment') { next.garments[role]=normalized[0]; if (role==='single') next.details.single=[]; else next.details[role]=[]; }
   if (kind==='reference') next.references.push(...normalized);
   if (kind==='detail') next.details[role].push(...normalized);
-  if (kind==='model') next.modelImage=normalized[0];
+  if (kind==='model') {next.modelImage=normalized[0];next.modelFromWork=false;}
   const sizes=tryonPayloadSizes(next);
   if (sizes.inputBytes>TRYON_MAX_INPUT_BYTES) throw new Error('所选图片压缩后总大小仍超过 20 MB，请减少图片数量或使用更小的图片。');
   if (sizes.requestBytes>TRYON_MAX_REQUEST_BYTES) throw new Error('图片总请求体超过 30 MB，请减少图片数量或使用更小的图片。');
@@ -261,8 +268,8 @@ async function addTryonFiles(kind, role, files, expectedRevision=tryonDraftRevis
 
 function removeTryonInput(key) {
   const state=tryonDraftState;
-  if (key==='model') {state.modelImage=null;}
-  else if (key.startsWith('reference:')) state.references.splice(Number(key.split(':')[1]),1);
+  if (key==='model') {state.modelImage=null;state.modelFromWork=false;}
+  else if (key.startsWith('reference:')) {const [removed]=state.references.splice(Number(key.split(':')[1]),1);remakeReferencePosts.delete(removed);}
   else if (key.startsWith('detail:')) {const [,role,index]=key.split(':'); state.details[role].splice(Number(index),1);}
   else {state.garments[key]=null; state.details[key]=[];}
   tryonDraftRevision++; pendingSubmission=null; renderTryonStudio();
@@ -274,12 +281,15 @@ function showTryonError(message) {
   box.hidden=!message; box.textContent=message;
 }
 
-function submitTryon() {
+async function submitTryon() {
   const workflow=buildTryonWorkflow();
+  if (!tryonDraftState.references.length) {showTryonError('请先添加至少一张参考照片。');return;}
   if (!workflow.source) {showTryonError('请至少上传一张主商品图：上装、下装或连体/全身服装。');return;}
   const sizes=tryonPayloadSizes();
   if (sizes.inputBytes>TRYON_MAX_INPUT_BYTES) {showTryonError('图片压缩后总大小超过 20 MB，请减少图片数量或重新选择较小的图片。');return;}
   if (sizes.requestBytes>TRYON_MAX_REQUEST_BYTES) {showTryonError('图片总请求体超过 30 MB，请减少图片数量或重新选择较小的图片。');return;}
   showTryonError('');
-  void generate(workflow.source,model,workflow);
+  const referencePostIds=workflow.inputImages.filter(item=>item.role==='reference').map(item=>remakeReferencePosts.get(item.image)).filter(Boolean);
+  const job=await generate(workflow.source,model,workflow);
+  if (job) await recordRemakeReferences(referencePostIds);
 }

@@ -69,11 +69,12 @@ function selectLibraryModel(modelId) {
   const selectedModel = allModels.find(m => m.id === modelId);
   if (selectedModel) {
     model = selectedModel.gender === 'male' ? 'male' : 'female';
-    if (typeof tryonDraftState !== 'undefined') tryonDraftState.modelImage = null;
+    if (screen === 'remake' && typeof tryonDraftState !== 'undefined') {tryonDraftState.modelImage = null;tryonDraftState.modelFromWork=false;}
     try { localStorage.setItem('yipai-selected-model-id', modelId); localStorage.setItem('yipai-model', model); } catch {}
   }
   document.querySelector('.model-picker')?.remove();
-  if (screen === 'prepare') renderTryonStudio();
+  if (screen === 'prepare') renderPrepare();
+  else if (screen === 'remake') renderRemake();
 }
 
 function showModelUpload() {
@@ -172,5 +173,6 @@ async function deleteModel(modelId) {
     if (savedId && allModels.find(m => m.id === savedId)) selectedModelId = savedId;
     else { selectedModelId = null; localStorage.removeItem('yipai-selected-model-id'); }
   } catch {}
-  if (screen === 'prepare') renderTryonStudio();
+  if (screen === 'prepare') renderPrepare();
+  else if (screen === 'remake') renderRemake();
 })();

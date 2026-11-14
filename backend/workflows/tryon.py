@@ -71,7 +71,7 @@ def ordered_tryon_inputs(inputs, reference=None):
     ]
 
 
-def build_tryon_prompt(model, inputs, config, candidate_index=0):
+def build_tryon_prompt(model, inputs, config, candidate_index=0, reference_plan=False, product_identity=False):
     person = '成年男性' if model == 'male' else '成年女性'
     numbered = list(enumerate(inputs, 1))
     garments = [(index, item) for index, item in numbered if item['role'] in (*GARMENT_ROLES, 'auto')]
@@ -80,6 +80,8 @@ def build_tryon_prompt(model, inputs, config, candidate_index=0):
     garment_numbers = {item['role']: index for index, item in garments}
     if identity and (reference or config['clothing_mode'] != 'auto'):
         person_description = '与模特身份图一致的成年模特'
+    elif product_identity:
+        person_description = '与商品作品身份一致的成年模特'
     elif reference:
         person_description = '与画面参考身份一致的成年模特'
     else:
@@ -89,7 +91,9 @@ def build_tryon_prompt(model, inputs, config, candidate_index=0):
         '图像角色：' + '；'.join(f'图{index}是{ROLE_LABELS[item["role"]]}' for index, item in numbered) + '。',
         f'让一位{person_description}真实自然地穿着和展示目标商品。',
         '商品保真优先级最高：严格保留主商品的品类、版型、颜色、图案、标识、文字、面料和结构；逐一保留口袋、纽扣、拉链、装饰的数量与位置，单侧口袋不得变成对称双侧。允许姿势造成的真实褶皱和垂坠，不得改款。',
-        '主商品图只提供商品本身，不复制服装图里的脸、人体、姿势、背景和光线。上装只替换上半身，下装只替换下半身；各件商品保持独立和真实穿着层次，不得融合成一件新款。',
+        ('商品作品提供目标商品和出镜人物身份，保留其脸部身份与发型，按拍摄方案重新安排姿势、背景与光线。'
+         if product_identity else '主商品图只提供商品本身，不复制服装图里的脸、人体、姿势、背景和光线。')
+        + '上装只替换上半身，下装只替换下半身；各件商品保持独立和真实穿着层次，不得融合成一件新款。',
     ]
     if config['clothing_mode'] == 'single':
         lines.append('连体/全身商品必须作为完整服装穿着，替换覆盖范围内冲突的上下装，不拆成无关的两件衣服；连衣裙不额外添加裤子。')
@@ -97,10 +101,11 @@ def build_tryon_prompt(model, inputs, config, candidate_index=0):
         lines.append('按图中真实商品品类处理：上衣展示上身、裤裙展示下身、连衣裙按完整服装、鞋履展示上脚与完整鞋型；不要把商品改成其他品类。')
     if reference:
         lines.extend([
-            f'图{reference}是本次成片的画面骨架：保持其人物姿势、身体比例、镜头距离、可见身体范围、构图、背景、光线和整体影调，不把半身或局部图拉远成全身。',
+            (f'图{reference}只提供拍摄风格、场景、光线和搭配气质；人物姿势、机位和景别按本张拍摄方案执行，确保所有目标商品完整可见。'
+             if reference_plan else f'图{reference}是本次成片的画面骨架：保持其人物姿势、身体比例、镜头距离、可见身体范围、构图、背景、光线和整体影调，不把半身或局部图拉远成全身。'),
             f'只替换图{reference}中与已上传商品冲突的服装。未被商品覆盖的原有上下装、鞋履、包与配饰自然保留，使整套穿搭完整；主商品保真优先，不复制造成冲突的参考服装。',
         ])
-        if not identity:
+        if not identity and not product_identity:
             lines.append(f'没有独立模特身份图，保留图{reference}人物的脸部身份、发型和年龄感。')
     else:
         directions = ('根据商品的色彩、面料和季节设计协调、有质感的商业穿搭',

@@ -1,0 +1,24 @@
+Create one professionally designed raster icon sprite sheet for the Chinese fashion photography app Yipai. Use the attached screenshot ONLY as a visual style reference for its large black navigation icons. Ignore all words, screen chrome, avatars and other screenshot content.
+
+STYLE: Match the reference's friendly, bold but airy, rounded black monoline outline icons. Pure black ink on a perfectly flat pure white background. Generous rounded corners, round line caps and round line joins, very simple geometries, slight soft squareness. Stroke thickness consistent across the entire set: approximately 7 pixels for an icon with a 96-pixel optical footprint, equivalent to a 2px stroke on a 28px UI icon. Clear open interiors, minimal detail, no sketch texture, no gradients, no shadows, no 3D, no gray tiles, no colored accent. These are practical small UI glyphs, not illustrations. The person icon should closely follow the reference: a round head, detached rounded arch shoulders and a flat rounded bottom. All icons feel part of the same family.
+
+LAYOUT: Exactly TWELVE isolated icons, in a perfectly regular FOUR COLUMN by THREE ROW grid on a 1024 x 1024 white canvas. Cell size 256 wide by 341.33 tall. Column centers are x=128,384,640,896; row centers are y=171,512,853. Each icon is optically centered on its cell center and is approximately 96 to 110 pixels wide/tall. Large white space separates all cells. NO grid lines, NO captions, NO numbers, NO typography, NO frame. No marks anywhere except the twelve icons.
+
+EXACT ORDER, left to right, then top to bottom:
+ROW 1:
+1. Bottom navigation CREATE: a clean rounded camera silhouette, a raised central viewfinder bump and one circular lens. No plus sign. Strong, simple outline.
+2. Bottom navigation COMMUNITY: two slightly overlapping rounded speech bubbles, front bubble with a simple speech tail and two small round dots inside. Very spare, legible.
+3. Bottom navigation PROFILE: round head above a smooth rounded shoulder arch with a closed flat bottom, similar to the person icon in the reference.
+4. Creation feature START SHOOTING: a rounded camera outline, one circular lens, one tiny sparkle at its upper right to distinguish it from the navigation camera. No button background.
+ROW 2:
+5. Creation feature RECREATE A LOOK: two overlapping rounded portrait photo cards with a simple landscape/mountain line and a small circular sun in the front card; make the offset back card clearly visible. Minimal.
+6. Creation feature CREATIVE VARIATIONS: three rounded square tiles in a two-by-two arrangement with the upper-right tile replaced by one simple four-point sparkle. Open spacing, no extra shapes.
+7. Community LIKE: one classic upright thumbs-up outline, simplified rounded thumb and rounded fingers as a single contour, short rounded wrist cuff on the left. Clearly a hand, not a heart.
+8. Community BOOKMARK: one rounded vertical bookmark ribbon outline, flat rounded top, centered V-shaped notch at the bottom. Empty interior.
+ROW 3:
+9. Community SHARE: simple rounded paper airplane tilted toward the upper right, with one interior fold line. Bold monoline outline.
+10. Community SAVE TO DEVICE: a simple downward arrow entering a low U-shaped download tray, rounded corners and round arrow tips. Visually distinct from the bookmark.
+11. Profile SETTINGS: a smoothly rounded six-tooth gear outline with one central circular hole; approximately the same optical size and stroke as all other icons. No tiny details.
+12. Profile BOOKMARKS: EXACT same single bookmark ribbon design as icon 8, identical proportions and line weight. This is intentional reuse for consistency.
+
+The final image must be clean and unambiguous enough to crop each cell into an individual app icon. The screenshot is a style reference only, not something to copy as a screenshot.

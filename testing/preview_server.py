@@ -39,12 +39,13 @@ def simulate(job_id, model, workflow_type='tryon', workflow_config=None):
         for index in range(1, count + 1):
             shutil.copyfile(fixtures / f'{name}-result.jpg', server.data_path(job_id, f'result-{index}'))
         shutil.copyfile(server.data_path(job_id, 'result-1'), output)
-    elif workflow_type == 'tryon':
+    elif workflow_type in ('tryon', 'remake'):
         with server.connect() as db:
             row = db.execute('SELECT input_images FROM jobs WHERE id=?', (job_id,)).fetchone()
         inputs = json.loads(row['input_images'] or '[]') if row else []
         references = sum(item.get('role') == 'reference' for item in inputs)
-        count = max(1, references) * (workflow_config or {}).get('output_count', 1)
+        default_count = 3 if workflow_type == 'remake' else 1
+        count = max(1, references) * (workflow_config or {}).get('output_count', default_count)
         for index in range(1, count + 1):
             shutil.copyfile(fixtures / f'{name}-result.jpg', server.data_path(job_id, f'result-{index}'))
         shutil.copyfile(server.data_path(job_id, 'result-1'), output)
