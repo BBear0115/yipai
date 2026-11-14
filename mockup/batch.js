@@ -4,10 +4,13 @@ let batchModel = 'female';
 let batchSubmitting = false;
 let batchJobs = [];
 
-function openBatchUpload() {
+// Opened from the photo library when several product photos are picked at once.
+function openBatchUpload(initialFiles = []) {
+  batchFiles.forEach(file => URL.revokeObjectURL(file.preview));
+  batchFiles = [];
   const layer = openOverlay(`<section class="sheet batch-sheet" role="dialog" aria-modal="true" aria-labelledby="batch-title">
     <div class="sheet-heading">
-      <h2 id="batch-title">批量上传</h2>
+      <h2 id="batch-title">批量作图</h2>
       <button class="icon-button" data-close aria-label="关闭">${icon('close')}</button>
     </div>
     <div class="batch-content">
@@ -22,7 +25,7 @@ function openBatchUpload() {
       <div class="batch-preview" id="batch-preview" hidden>
         <div class="batch-controls">
           <p><strong>已选择 <span id="batch-count">0</span> 张图片</strong></p>
-          <button class="text-button" id="batch-clear">清空</button>
+          <span class="batch-control-actions"><button class="text-button" id="batch-add">继续添加</button><button class="text-button" id="batch-clear">清空</button></span>
         </div>
         <div class="batch-grid" id="batch-grid"></div>
       </div>
@@ -62,6 +65,7 @@ function openBatchUpload() {
     preview.hidden = !hasFiles;
     modelSelect.hidden = !hasFiles;
     countEl.textContent = batchFiles.length;
+    layer.querySelector('#batch-add').hidden = batchFiles.length >= 10;
     submitBtn.disabled = !hasFiles || batchSubmitting;
     submitBtn.textContent = batchSubmitting ? '正在提交…' : `生成 ${batchFiles.length} 张图片`;
 
@@ -141,6 +145,7 @@ function openBatchUpload() {
   }
 
   layer.querySelector('#batch-select').onclick = () => fileInput.click();
+  layer.querySelector('#batch-add').onclick = () => fileInput.click();
   layer.querySelector('#batch-clear').onclick = () => {
     batchFiles.forEach(file => URL.revokeObjectURL(file.preview));
     batchFiles = [];
@@ -224,10 +229,10 @@ function openBatchUpload() {
       if (successCount > 0) {
         results.forEach(job => mergeJob(job));
         closeOverlay();
-        home();
+        myPage();
         toast(queueFull
           ? `已提交 ${successCount} 张，其余请等待队列完成后再提交`
-          : `已提交 ${successCount} 张图片，可在创作历史查看`
+          : `已提交 ${successCount} 张图片，可在「我的」查看`
         );
         schedulePoll();
       } else {
@@ -243,5 +248,6 @@ function openBatchUpload() {
     }
   };
 
+  if (initialFiles.length) void processFiles(initialFiles);
   watchImages(layer);
 }

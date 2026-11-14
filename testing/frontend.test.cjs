@@ -156,6 +156,29 @@ test('开拍 offers camera and library choices, each opening its own file input'
   assert.match(fs.readFileSync(path.join(__dirname,'../mockup/index.html'),'utf8'),/id="camera-input"[^>]*capture="environment"/);
 });
 
+test('the library option advertises multi-select and hands several photos to batch creation',async()=>{
+  const ctx=await context();
+  vm.runInContext(`
+    layer={querySelectorAll:()=>[]};openOverlay=html=>{sheetHtml=html;return layer};pickImage();
+    batched=null;openBatchUpload=files=>{batched=files};
+    input.files=[{name:'a.jpg'},{name:'b.jpg'}];
+  `,ctx);
+  assert.match(vm.runInContext('sheetHtml',ctx),/相册 \/ 文件[\s\S]*最多 10 张/);
+  await vm.runInContext('input.onchange({target:input})',ctx);
+  assert.deepEqual(Array.from(vm.runInContext('batched.map(file=>file.name)',ctx)),['a.jpg','b.jpg']);
+  const html=fs.readFileSync(path.join(__dirname,'../mockup/index.html'),'utf8');
+  assert.match(html,/id="file-input"[^>]*multiple/);
+  assert.doesNotMatch(html,/id="camera-input"[^>]*multiple/);
+});
+
+test('settings no longer offer the task list or batch upload',async()=>{
+  const ctx=await context();
+  vm.runInContext("sheet=(title,body,buttons)=>{labels=buttons.map(button=>button.label)};mySettings()",ctx);
+  const labels=Array.from(vm.runInContext('labels',ctx));
+  assert.ok(!labels.includes('任务列表')&&!labels.includes('批量上传'));
+  assert.ok(!fs.existsSync(path.join(__dirname,'../mockup/tasks.js')));
+});
+
 test('recreating an official example loads its product photo into the existing prepare flow',async()=>{
   const ctx=await context();
   vm.runInContext("prepared=false;prepare=()=>{prepared=true};toast=()=>{};recreatePost({productImage:'assets/community/floral-dress-product.jpg'})",ctx);

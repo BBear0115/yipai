@@ -512,32 +512,6 @@ class Handler(SimpleHTTPRequestHandler):
             self.session()
             key, uid = credentials()
             return self.json_out(200, {'ready': bool(key), 'generationMode': self.generation_mode})
-        if self.path == '/api/tasks':
-            visitor = self.session()
-            with connect() as db:
-                rows = db.execute('SELECT * FROM task_queue WHERE visitor=? ORDER BY created DESC', (visitor,)).fetchall()
-            tasks = []
-            for row in rows:
-                progress_pct = row['progress'] if row['progress'] >= 0 else 0
-                tasks.append({
-                    'id': row['id'],
-                    'title': row['title'],
-                    'status': row['status'],
-                    'statusGroup': row['status_group'],
-                    'progress': progress_pct,
-                    'expectedCount': row['expected_count'],
-                    'resultCount': row['result_count'],
-                    'created': row['created'],
-                    'updated': row['updated'],
-                    'completed': row['completed'],
-                })
-            grouped = {
-                'queued': [t for t in tasks if t['statusGroup'] == 'queued'],
-                'running': [t for t in tasks if t['statusGroup'] == 'running'],
-                'completed': [t for t in tasks if t['statusGroup'] == 'completed'],
-                'failed': [t for t in tasks if t['statusGroup'] == 'failed'],
-            }
-            return self.json_out(200, {'tasks': tasks, 'grouped': grouped})
         if self.path == '/api/jobs':
             visitor = self.session()
             with connect() as db:

@@ -137,11 +137,6 @@ async function renderRoute() {
     catch (error) { if (version === routeVersion) pageError(error.message, app, communityPage); }
     return;
   }
-  if (parts[0] === 'tasks') {
-    await openTasksPage();
-    restore();
-    return;
-  }
   // Links into the removed workbench (#workflows, #workflow/…, #create/…) land on the matching page.
   if (['workflows', 'workflow', 'create'].includes(parts[0])) {
     const target = ['background', 'background-change'].includes(parts[1]) ? '#variations/background'
@@ -306,7 +301,7 @@ function renderMy() {
   loadPosts().then(() => updateView(), () => {});
 }
 function mySettings() {
-  sheet('设置', '', [{label:'编辑昵称', action:editProfile}, {label:'任务列表', action:() => navigate('#tasks')}, {label:'批量上传', action:openBatchUpload}, {label:'取消'}]);
+  sheet('设置', '', [{label:'编辑昵称', action:editProfile}, {label:'取消'}]);
 }
 function updateMyStats() {
   const mine = posts.filter(post => post.mine);
@@ -628,9 +623,9 @@ function closeOverlay(restoreFocus = true) {
   document.querySelector('.modal-backdrop')?.remove(); document.body.classList.remove('overlay-open'); app.inert = false; dock.inert = false;
   if (restoreFocus && overlayTrigger?.isConnected) overlayTrigger.focus(); overlayTrigger = null;
 }
-// Lets the user shoot the product now or choose an existing photo; both inputs feed the same upload handler.
+// Lets the user shoot the product now or choose existing photos; picking several from the library opens batch creation.
 function pickImage() {
-  const layer = openOverlay(`<section class="sheet pick-sheet" role="dialog" aria-modal="true" aria-labelledby="pick-title"><div class="sheet-heading"><h2 id="pick-title">添加商品图</h2><button class="icon-button" data-close aria-label="关闭">${icon('close')}</button></div><div class="pick-options"><button class="pick-option" type="button" data-pick="camera"><span class="pick-icon">${icon('camera')}</span><strong>拍照</strong><small>用相机拍摄商品</small></button><button class="pick-option" type="button" data-pick="library"><span class="pick-icon">${icon('folder')}</span><strong>相册 / 文件</strong><small>选择已有的图片</small></button></div></section>`);
+  const layer = openOverlay(`<section class="sheet pick-sheet" role="dialog" aria-modal="true" aria-labelledby="pick-title"><div class="sheet-heading"><h2 id="pick-title">添加商品图</h2><button class="icon-button" data-close aria-label="关闭">${icon('close')}</button></div><div class="pick-options"><button class="pick-option" type="button" data-pick="camera"><span class="pick-icon">${icon('camera')}</span><strong>拍照</strong><small>用相机拍摄商品</small></button><button class="pick-option" type="button" data-pick="library"><span class="pick-icon">${icon('folder')}</span><strong>相册 / 文件</strong><small>选择已有的图片</small><span class="pick-badge">可多选 · 最多 10 张</span></button></div></section>`);
   layer.querySelectorAll('[data-pick]').forEach(button => button.onclick = () => {
     closeOverlay(false);
     (button.dataset.pick === 'camera' ? cameraInput : input).click();
@@ -677,7 +672,9 @@ function confirmDelete(job) {
 let uploadVersion = 0;
 input.onchange = cameraInput.onchange = async event => {
   const source = event?.target || input;
-  const file = source.files[0]; source.value = ''; if (!file) return;
+  const files = [...source.files]; source.value = '';
+  if (files.length > 1) { openBatchUpload(files); return; }
+  const file = files[0]; if (!file) return;
   const version = ++uploadVersion;
   if (file.size > 20 * 1024 * 1024) { pageError('图片不能超过 20 MB，请换一张'); return; }
   try {
