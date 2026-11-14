@@ -368,7 +368,7 @@ p { line-height:1.7; }
 .field-input::placeholder { color:#777f89; }
 textarea.field-input { resize:vertical; min-height:140px; }
 .publish-visibility { color:var(--muted); font-size:.875rem; margin:16px 0 24px; }
-.toast { position:fixed; left:50%; bottom:calc(104px + env(safe-area-inset-bottom)); transform:translate(-50%,12px); z-index:50; width:max-content; max-width:calc(100% - 32px); background:#292d34; color:var(--text); border:1px solid #ffffff12; border-radius:10px; padding:12px 16px; font-size:.875rem; line-height:1.5; text-align:center; opacity:0; pointer-events:none; transition:opacity .15s,transform .15s; }
+.toast { position:fixed; left:50%; bottom:calc(104px + env(safe-area-inset-bottom)); transform:translate(-50%,12px); z-index:50; width:max-content; max-width:calc(100% - 32px); background:#20242be6; color:#f2f3f2; border:1px solid #ffffff14; border-radius:12px; box-shadow:0 8px 24px #0000002e; -webkit-backdrop-filter:blur(16px); backdrop-filter:blur(16px); padding:12px 16px; font-size:.875rem; line-height:1.5; text-align:center; opacity:0; pointer-events:none; transition:opacity .15s,transform .15s; }
 .toast.show { opacity:1; transform:translate(-50%,0); }
 .overlay-open { overflow:hidden; }
 .modal-backdrop { position:fixed; inset:0; z-index:30; background:#17182166; display:flex; align-items:end; justify-content:center; padding-top:16px; }

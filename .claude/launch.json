@@ -34,6 +34,16 @@
     {
       "name": "online-demo",
       "url": "https://pixel-diffusion.com"
+    },
+    {
+      "name": "yipai-preview-toast",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "testing/preview_server.py",
+        "--port",
+        "8025"
+      ],
+      "port": 8025
     }
   ]
 }
