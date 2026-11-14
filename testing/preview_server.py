@@ -33,8 +33,8 @@ def simulate(job_id, model, workflow_type='tryon', workflow_config=None):
     time.sleep(8)
     name = 'floral-dress' if model == 'female' else 'red-hoodie'
     output = server.data_path(job_id, 'result')
-    if workflow_type == 'pose_variation':
-        count = (workflow_config or {}).get('pose_count', 4)
+    if workflow_type in ('pose_variation', 'remake'):
+        count = 3 if workflow_type == 'remake' else (workflow_config or {}).get('pose_count', 4)
         for index in range(1, count + 1):
             shutil.copyfile(fixtures / f'{name}-result.jpg', server.data_path(job_id, f'result-{index}'))
         shutil.copyfile(server.data_path(job_id, 'result-1'), output)

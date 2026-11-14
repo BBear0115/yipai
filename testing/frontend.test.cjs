@@ -20,6 +20,7 @@ async function context() {
   vm.runInContext('openBatchUpload=()=>{}',sandbox);
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../mockup/community.js'),'utf8'),sandbox);
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../mockup/studio.js'),'utf8'),sandbox);
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'../mockup/remake.js'),'utf8'),sandbox);
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../mockup/app.js'),'utf8'),sandbox);
   await vm.runInContext('sessionReady',sandbox);
   vm.runInContext('waiting=()=>{};prepare=()=>{};toast=()=>{};pollJobs=async()=>{};',sandbox);
@@ -83,11 +84,12 @@ test('community text is escaped and examples are clearly identified',async()=>{
   assert.ok(html.includes('官方示例'));
 });
 
-test('community posts overlay the product and remake bubble, with like, bookmark and share actions',async()=>{
+test('community posts overlay the product and a 做参考 bubble, with like, bookmark and share actions',async()=>{
   const ctx=await context();
   vm.runInContext("posts=[{id:'0123456789abcdef0123456789abcdef',nickname:'访客',productName:'衬衫',note:'好穿',image:'/image',productImage:'/input',created:new Date().toISOString()}];renderCommunity()",ctx);
   const html=vm.runInContext('app.innerHTML',ctx);
-  assert.match(html,/feed-product-thumb[\s\S]*feed-remake[^>]*>[\s\S]*?拍同款/);
+  assert.match(html,/feed-product-thumb[\s\S]*feed-remake[^>]*data-reference="0123456789abcdef0123456789abcdef"[^>]*>[\s\S]*?做参考/);
+  assert.doesNotMatch(html,/拍同款/);
   assert.match(html,/data-like="0123456789abcdef0123456789abcdef"[^>]*>[\s\S]*?<span>好看<\/span>/);
   const actions=html.slice(html.indexOf('feed-actions'));
   assert.ok(actions.indexOf('好看')<actions.indexOf('收藏')&&actions.indexOf('收藏')<actions.indexOf('分享'));
@@ -99,6 +101,39 @@ test('retired post detail links fall back to the community feed',async()=>{
   vm.runInContext("location.hash='#post/example-dress'",ctx);
   await vm.runInContext('renderRoute()',ctx);
   assert.equal(vm.runInContext('location.hash',ctx),'#community');
+});
+
+test('published works show a badge in 我的 and their post details and stats on the result page',async()=>{
+  const ctx=await context();
+  vm.runInContext("history=[{id:'a',status:'succeeded',image:'/a',date:'11/14',created:'2026-11-14T00:00:00Z',post:{productName:'碎花裙',note:'花色还原好',created:'2026-11-14T00:00:00Z',likes:3,saves:2,remakes:1}},{id:'b',status:'succeeded',image:'/b',date:'11/14',created:'2026-11-14T00:00:00Z',post:null}]",ctx);
+  assert.match(vm.runInContext("historyCard(history[0])",ctx),/status-badge published">已发布/);
+  assert.doesNotMatch(vm.runInContext("historyCard(history[1])",ctx),/已发布/);
+  vm.runInContext("renderResult(history[0])",ctx);
+  const html=vm.runInContext('app.innerHTML',ctx);
+  assert.match(html,/id="delete-job"/);
+  assert.match(html,/碎花裙[\s\S]*花色还原好/);
+  assert.match(html,/<dd>3<\/dd><dt>觉得好看[\s\S]*<dd>2<\/dd><dt>收藏[\s\S]*<dd>1<\/dd><dt>做参考/);
+});
+
+test('deleting a published work asks a second time before removing the post',async()=>{
+  const ctx=await context();
+  vm.runInContext(`
+    titles=[];calls=[];sheet=(title,body,buttons)=>{titles.push(title);lastButtons=buttons};
+    api=async(path,options)=>{calls.push(path+' '+options.method);return {deleted:true,postDeleted:true}};
+    myPage=()=>{};toast=()=>{};
+    history=[{id:'a',status:'succeeded',post:{productName:'碎花裙',likes:1,saves:0}}];posts=[{id:'a'}];
+    confirmDelete(history[0]);
+    lastButtons[1].action();
+  `,ctx);
+  assert.deepEqual(Array.from(vm.runInContext('titles',ctx)),['删除这张作品？','这张作品已发布到社区']);
+  assert.equal(vm.runInContext('calls.length',ctx),0);
+  await vm.runInContext('lastButtons[1].action()',ctx);
+  assert.deepEqual(Array.from(vm.runInContext('calls',ctx)),['/api/jobs/a DELETE']);
+  assert.equal(vm.runInContext('history.length+posts.length',ctx),0);
+  vm.runInContext("titles=[];calls=[];history=[{id:'b',status:'succeeded',post:null}];confirmDelete(history[0])",ctx);
+  await vm.runInContext('lastButtons[1].action()',ctx);
+  assert.deepEqual(Array.from(vm.runInContext('titles',ctx)),['删除这张作品？']);
+  assert.deepEqual(Array.from(vm.runInContext('calls',ctx)),['/api/jobs/b DELETE']);
 });
 
 test('navigation writes task routes to the URL hash',async()=>{
@@ -179,11 +214,80 @@ test('settings no longer offer the task list or batch upload',async()=>{
   assert.ok(!fs.existsSync(path.join(__dirname,'../mockup/tasks.js')));
 });
 
-test('recreating an official example loads its product photo into the existing prepare flow',async()=>{
+test('做参考 carries a post\'s effect photo into 拍同款 as the reference, without touching the 开拍 draft',async()=>{
   const ctx=await context();
-  vm.runInContext("prepared=false;prepare=()=>{prepared=true};toast=()=>{};recreatePost({productImage:'assets/community/floral-dress-product.jpg'})",ctx);
-  assert.equal(vm.runInContext('draft',ctx),'assets/community/floral-dress-product.jpg');
-  assert.equal(vm.runInContext('prepared',ctx),true);
+  vm.runInContext("reacted=[];react=async(post,kind)=>{reacted.push(kind)};useAsReference({id:'example-dress',image:'assets/community/floral-dress-result.jpg',productImage:'assets/community/floral-dress-product.jpg',example:true})",ctx);
+  assert.equal(vm.runInContext('remakeState.reference',ctx),'assets/community/floral-dress-result.jpg');
+  assert.equal(vm.runInContext('remakeState.referencePost',ctx),null);
+  assert.equal(vm.runInContext('location.hash',ctx),'#remake');
+  assert.equal(vm.runInContext('draft',ctx),null);
+  // Choosing it is not a remake yet; the count only rises once a job is submitted.
+  assert.equal(vm.runInContext('reacted.length',ctx),0);
+});
+
+test('home 拍同款 opens the remake page with reference, product and model pickers',async()=>{
+  const ctx=await context();
+  vm.runInContext("jobsLoaded=true;history=[{id:'done',status:'succeeded',image:'/api/jobs/done/result',model:'female',date:'11/14',created:'2026-11-14T00:00:00Z'}];location.hash='#remake'",ctx);
+  await vm.runInContext('renderRoute()',ctx);
+  assert.equal(vm.runInContext('screen',ctx),'remake');
+  const html=vm.runInContext('app.innerHTML',ctx);
+  assert.match(html,/参考图[\s\S]*商品[\s\S]*模特/);
+  assert.match(html,/data-remake-camera="reference"[\s\S]*data-remake-upload="reference"/);
+  assert.match(html,/data-remake-camera="product"[\s\S]*data-remake-upload="product"/);
+  assert.deepEqual(Array.from(vm.runInContext('[...app.innerHTML.matchAll(/data-remake-work="(\\w+)"/g)].map(match=>match[1])',ctx)),['done']);
+  assert.deepEqual(Array.from(vm.runInContext('[...app.innerHTML.matchAll(/data-remake-model="(\\w+)"/g)].map(match=>match[1])',ctx)),['female','male']);
+  assert.match(html,/id="remake-generate"[^>]*disabled/);
+  assert.match(html,/capture="environment"/);
+});
+
+test('picking a finished work as the product keeps its model and hides the model picker',async()=>{
+  const ctx=await context();
+  vm.runInContext("jobsLoaded=true;screen='remake';history=[{id:'done',status:'succeeded',image:'/api/jobs/done/result',model:'female',date:'11/14',created:'2026-11-14T00:00:00Z'}];remakeState.reference='data:image/jpeg;base64,ref';remakeUseWork('done')",ctx);
+  const html=vm.runInContext('app.innerHTML',ctx);
+  assert.equal(vm.runInContext('remakeState.product',ctx),'/api/jobs/done/result');
+  assert.match(html,/沿用这张作品里的模特/);
+  assert.doesNotMatch(html,/data-remake-model/);
+  assert.doesNotMatch(html,/id="remake-generate"[^>]*disabled/);
+  assert.deepEqual(JSON.parse(JSON.stringify(vm.runInContext('remakePayload().workflowConfig',ctx))),{model_source:'work'});
+});
+
+test('拍同款 submission sends reference and product data, counts the 做参考 and opens the job',async()=>{
+  const ctx=await context();
+  vm.runInContext(`
+    screen='remake';currentRoute='#remake';navigate=route=>{location.hash=route};renderRemake=()=>{};
+    posts=[{id:'0123456789abcdef0123456789abcdef',image:'/api/posts/0123456789abcdef0123456789abcdef/result'}];
+    reacted=[];react=async(post,kind,active)=>{reacted.push([post.id,kind,active])};
+    sourceData=async source=>'data:image/jpeg;base64,'+(source.includes('/api/posts/')?'reference':'product');
+    useAsReference(posts[0]);
+    remakeState.product='data:image/jpeg;base64,product';remakeState.model='female';
+    calls=[];api=async(path,options)=>{calls.push(JSON.parse(options.body));return {job:{id:'fedcba9876543210fedcba9876543210',status:'queued',created:'2026-11-14T00:00:00Z',workflowType:'remake'}}};
+  `,ctx);
+  await vm.runInContext('remakeSubmit()',ctx);
+  const body=JSON.parse(JSON.stringify(vm.runInContext('calls[0]',ctx)));
+  assert.equal(body.workflowType,'remake');
+  assert.deepEqual(body.workflowConfig,{model_source:'preset',model:'female'});
+  assert.equal(body.image,'data:image/jpeg;base64,product');
+  assert.equal(body.reference,'data:image/jpeg;base64,reference');
+  assert.ok(body.idempotencyKey.length>0);
+  assert.deepEqual(JSON.parse(JSON.stringify(vm.runInContext('reacted',ctx))),[['0123456789abcdef0123456789abcdef','remake',true]]);
+  assert.equal(vm.runInContext('location.hash',ctx),'#job/fedcba9876543210fedcba9876543210');
+  assert.equal(vm.runInContext('remakeState.reference',ctx),'');
+});
+
+test('拍同款 results show three photos, the reference, and regenerate with the same reference',async()=>{
+  const ctx=await context();
+  vm.runInContext(`
+    sent=[];generate=async(source,model,workflow)=>{sent.push({source,model,workflow})};
+    job={id:'remake',model:'male',status:'succeeded',created:new Date().toISOString(),image:'/r-1',images:['/r-1','/r-2','/r-3'],original:'/input',reference:'/api/jobs/remake/reference',workflowType:'remake',workflowConfig:{model_source:'preset',model:'male'}};
+    renderResult(job);
+  `,ctx);
+  const html=vm.runInContext('app.innerHTML',ctx);
+  assert.equal((html.match(/data-pose-image=/g)||[]).length,3);
+  assert.match(html,/共 3 张独立图片/);
+  assert.match(html,/拍同款第 1 张/);
+  assert.match(html,/id="result-reference"[\s\S]*参考图/);
+  assert.match(html,/商品原图/);
+  assert.equal(vm.runInContext('poseProgress({workflowType:"remake",images:["/r-1"]})',ctx),'已生成 1 / 3 张');
 });
 
 test('model library initializes only after app APIs and toast are available',()=>{

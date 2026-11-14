@@ -148,6 +148,8 @@ p { line-height:1.7; }
 .image-error .secondary { min-height:44px; padding:8px; font-size:.875rem; }
 .status-badge { position:absolute; left:8px; top:8px; display:flex; align-items:center; gap:6px; padding:6px 8px; border-radius:6px; font-size:.875rem; line-height:1.4; color:var(--accent); background:#162a27eF; }
 .status-badge.failed { color:var(--danger); background:var(--danger-soft); }
+.status-badge.published { color:#0f7a68; background:#e2f5f1f0; }
+.light .status-badge.published { background:#e2f5f1f0; }
 .status-dot { width:6px; height:6px; background:currentColor; border-radius:50%; }
 .task-banner { display:flex; align-items:center; gap:12px; text-align:left; width:100%; padding:14px; border:1px solid #33514c; background:linear-gradient(110deg,#1b2e2c,#1c2127); color:var(--text); border-radius:16px; margin:14px 0 0; }
 .task-banner-icon { display:grid; place-items:center; width:40px; height:40px; flex:none; border-radius:12px; background:#7adbc817; }
@@ -292,6 +294,25 @@ p { line-height:1.7; }
 .result-summary { margin:16px 0; }
 .result-summary .eyebrow,.result-summary h2,.result-meta { display:none; }
 .result-summary p { color:var(--muted); margin:0; font-size:.875rem; }
+.published-card { padding:14px 16px 6px; border:1px solid var(--line); border-radius:16px; background:var(--surface); }
+.published-card header { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.published-tag { display:inline-flex; align-items:center; gap:4px; color:var(--accent); font-size:.8125rem; font-weight:650; }
+.published-tag svg { width:15px; height:15px; stroke-width:2.4; }
+.published-card time { color:var(--muted); font-size:.75rem; }
+.result-summary .published-card h2 { display:block; margin:10px 0 4px; font-size:1rem; letter-spacing:0; }
+.result-summary .published-card p { color:#c3c8c8; font-size:.875rem; line-height:1.6; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+.published-stats { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); margin:14px 0 4px; padding-top:12px; border-top:1px solid var(--line); }
+.published-stats>div { display:flex; flex-direction:column; align-items:center; gap:2px; }
+.published-stats>div+div { border-left:1px solid var(--line); }
+.published-stats dd { margin:0; font-size:1.125rem; font-weight:750; font-variant-numeric:tabular-nums; }
+.published-stats dt { color:var(--muted); font-size:.75rem; }
+.published-card .text-button { width:100%; color:var(--accent); font-weight:600; }
+.remake-reference { display:flex; align-items:center; gap:12px; width:100%; margin-top:12px; padding:8px; border:1px solid var(--line); border-radius:12px; background:var(--surface); color:var(--text); font-size:.875rem; font-weight:600; text-align:left; cursor:zoom-in; }
+.remake-reference>.image-frame { flex:none; width:48px; height:60px; border-radius:8px; }
+.remake-reference .image-error .secondary { display:none; }
+.remake-reference img { object-fit:cover; object-position:center 20%; }
+.remake-reference-copy { display:flex; flex-direction:column; gap:2px; }
+.remake-reference small { color:var(--muted); font-size:.75rem; font-weight:400; }
 .result-summary .preview-output-notice { margin-top:12px; padding:10px 12px; border:1px solid #d6e0f0; border-radius:8px; color:#405b7d; background:#f1f5fa; font-size:.8125rem; line-height:1.5; }
 .result-side { padding-bottom:0; }
 .result-actions { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; position:fixed; z-index:5; bottom:0; left:0; right:0; padding:12px 16px calc(12px + env(safe-area-inset-bottom)); border-top:1px solid var(--line); background:#14171df2; -webkit-backdrop-filter:blur(16px); backdrop-filter:blur(16px); }
@@ -324,6 +345,7 @@ p { line-height:1.7; }
 .feed-product-thumb .image-error .secondary { display:none; }
 .feed-remake { display:inline-flex; align-items:center; gap:6px; min-height:36px; padding:6px 14px 6px 10px; border-radius:99px; color:var(--accent-ink); background:var(--accent); box-shadow:0 4px 14px #0006; font-size:.875rem; font-weight:700; }
 .feed-remake svg { width:18px; height:18px; stroke-width:2; }
+.feed-remake .asset-icon { width:18px; height:18px; }
 .feed-remake:hover { background:var(--accent-strong); }
 .feed-actions { display:flex; align-items:center; gap:4px; margin:4px -8px 0; }
 .feed-action { display:inline-flex; align-items:center; gap:6px; min-height:44px; padding:8px; background:none; font-size:.9375rem; font-weight:600; }

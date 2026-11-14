@@ -59,3 +59,11 @@
 @media (prefers-reduced-motion:reduce) {
   .mode-tab,.option-chip,.upload-card,.picker-source,.picker-work { transition:none; }
 }
+
+/* 拍同款：参考图与商品各占一格，沿用创意裂变的上传卡片。 */
+.remake-picker { grid-template-columns:96px minmax(0,1fr); }
+.remake-picker-note { align-self:center; margin:0; padding:0 8px; color:var(--muted); font-size:.8125rem; line-height:1.7; }
+.remake-picker-note strong { display:block; margin-bottom:4px; color:var(--text); font-size:.9375rem; font-weight:650; }
+.remake-thumb .image-frame { height:min(36dvh,300px); }
+.remake-page .compact-models { margin-bottom:4px; }
+.remake-page .model-chip>.image-frame { height:96px; }

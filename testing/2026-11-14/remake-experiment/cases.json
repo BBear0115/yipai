@@ -1,0 +1,76 @@
+[
+  {
+    "id": "hoodie-to-striped-tee",
+    "reference": "inputs/ref-hoodie-screenshot.webp",
+    "reference_crop": [
+      240,
+      90,
+      720,
+      1100
+    ],
+    "product": "../../../mockup/assets/community/striped-shirt-product.jpg",
+    "model": "../../../mockup/assets/male-model.png",
+    "analysis": {
+      "original_category": "上衣（宽松连帽卫衣）",
+      "shot": "竖构图中近景，从头顶到大腿上部，人物居中，正面平视机位",
+      "pose": "正面站立，肩膀放松，双手插在上衣前侧口袋里，下巴微收，直视镜头，表情冷淡",
+      "styling": "头戴米白色无图案毛线冷帽，帽檐翻边、戴在头顶偏后；内搭白色圆领打底露出一点领口；下装深蓝色宽松原色牛仔裤",
+      "scene": "浅灰白色无缝纯色摄影背景，没有任何道具",
+      "lighting": "柔和均匀的正面棚拍光，阴影浅，整体低对比",
+      "color": "低饱和、干净自然，背景略偏冷",
+      "mood": "潮牌街头风格的模特图册，松弛、随性、有态度"
+    }
+  },
+  {
+    "id": "night-jacket-to-plaid-pants",
+    "reference": "inputs/ref-night-jacket-screenshot.webp",
+    "reference_crop": [
+      150,
+      120,
+      720,
+      1170
+    ],
+    "product": "inputs/product-plaid-pants-screenshot.webp",
+    "product_crop": [
+      0,
+      560,
+      921,
+      1368
+    ],
+    "product_note": "图1里只有那条橘棕色、米白和浅蓝格纹的毛呢阔腿长裤是目标商品；图1中的棕色拉链卫衣、雪地靴和金属折叠椅都不是商品，不要出现在结果里。",
+    "model": "../../../mockup/assets/male-model.png",
+    "analysis": {
+      "original_category": "上衣（浅蓝灰条纹摇粒绒连帽拉链外套）",
+      "shot": "竖构图全身照，从头顶到鞋，人物居中略偏左，机位略低于胸口向上拍，让人物显得高大",
+      "pose": "正面站立，身体微微前倾，双臂自然垂在身体两侧、手指放松，下巴微抬，眼神直视镜头，表情冷淡",
+      "styling": "头戴黑色无图案针织冷帽；上身一件纯黑色无图案的宽松连帽卫衣，下摆盖住裤腰，不抢裤子的视觉重心；脚穿黑色简约板鞋",
+      "scene": "夜晚的城市街头，深蓝黑色夜空，远处有棕榈树剪影和暗色建筑，建筑上有一点暖黄色灯光，画面里没有任何可辨认的文字或招牌字样",
+      "lighting": "相机正面直闪打光，人物被闪光灯照亮、背景偏暗，有明显的闪光硬光感和轻微的地面投影",
+      "color": "背景暗、冷蓝黑色调，人物衣物颜色鲜亮，整体高对比，带一点胶片颗粒",
+      "mood": "美式潮牌夜拍街拍大片，随性、酷、有态度"
+    },
+    "variants": [
+      "姿势与参考一致：正面站立、双臂自然垂下、直视镜头。",
+      "换成侧身约 45 度向前迈步的抓拍，一只手插在卫衣口袋里，头转向镜头，画面更有动感。",
+      "换成蹲坐在路边的姿势，双手搭在膝盖上，镜头稍微俯拍，让格纹裤的版型和裤腿垂坠感完整可见。"
+    ]
+  },
+  {
+    "id": "bicycle-meadow-to-striped-zip-hoodie",
+    "reference": "inputs/ref-bicycle-meadow.webp",
+    "reference_crop": [
+      0,
+      0,
+      1124,
+      1380
+    ],
+    "product": "inputs/product-striped-zip-hoodie-screenshot.webp",
+    "product_crop": [
+      0,
+      640,
+      921,
+      1460
+    ],
+    "model": "../../../mockup/assets/male-model.png"
+  }
+]

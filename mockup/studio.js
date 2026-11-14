@@ -38,7 +38,8 @@ const STUDIO_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const workflowNames = {
   tryon: '虚拟试穿',
   pose_variation: '姿势裂变',
-  background_change: '背景替换'
+  background_change: '背景替换',
+  remake: '拍同款'
 };
 
 function workflowJobName(job) {

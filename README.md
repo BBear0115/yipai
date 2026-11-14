@@ -39,7 +39,9 @@ python3 testing/preview_server.py --port 8019
 
 打开 <http://127.0.0.1:8019/>。演示使用固定样例模拟排队与生成，不处理上传图片、不调用图片服务。页面会显示演示模式提示；数据存入临时目录并在退出后清理。可增加 `--empty` 查看空工作台，或 `--large-text` 检查 200% 根字号布局。
 
-真实生成通过 Image2 网关调用 `gpt-image-2.5-flare`，需要相应接入权限，并可能产生供应商费用；普通静态服务器无法运行生成接口。密钥只保存在服务端，环境变量优先于 `.env.local`。如网关要求接入方标识，可额外设置 `IMAGE2_UUAP_ID`。
+真实生成通过 Image2 网关调用 `gpt-image-2.5-sunburst`，需要相应接入权限，并可能产生供应商费用；普通静态服务器无法运行生成接口。密钥只保存在服务端，环境变量优先于 `.env.local`。如网关要求接入方标识，可额外设置 `IMAGE2_UUAP_ID`。
+
+「拍同款」先用视觉模型反推参考图的拍法，再出 3 张图。反推走另一个网关（默认 `http://z.duxiaoman-int.com/coding/v1`、模型 `gpt-6.1-sol`，只支持流式请求），需要在 `.env.local` 设置 `ANALYZE_API_KEY`；接口地址和模型名可用 `ANALYZE_BASE_URL`、`ANALYZE_MODEL` 覆盖。
 
 默认数据目录为 `backend/data/`；可用 `YIPAI_DATA_DIR` 指定其他目录，用 `YIPAI_PORT` 修改端口，用 `IMAGE2_ENV_FILE` 指定配置文件。真实服务在 macOS 上使用苹方字体合成中文水印；其他系统需要按源码配置可用的中文字体并验证水印。
 
