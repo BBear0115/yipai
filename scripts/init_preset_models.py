@@ -106,26 +106,39 @@ def init_existing_models(dry_run: bool = False) -> list[dict]:
 
 def generate_diverse_models(count: int = 10, dry_run: bool = False) -> list[dict]:
     """通过 Image2 生成多样化的预设模特。"""
+    if type(count) is not int or count < 0:
+        raise ValueError('模特数量必须是非负整数')
     prompts_file = ROOT / 'scripts' / 'model-prompts.json'
     if not prompts_file.is_file():
         print(f"⚠️  {prompts_file} 不存在，跳过生成")
         return []
 
     api_key, uuap_id = credentials()
-    if not api_key:
+    if not api_key and not dry_run:
         print("⚠️  未配置 IMAGE2_GATEWAY_API_KEY，跳过生成")
         return []
 
-    # 定义多样化的模特配置
+    # 定义多样化的模特配置，覆盖不同风格、年龄感和气质
     diverse_configs = [
-        {'name': '青年女模特', 'gender': 'female', 'desc': '22-25岁，清新活力'},
-        {'name': '成熟女模特', 'gender': 'female', 'desc': '30-35岁，优雅知性'},
-        {'name': '小麦肤色女模特', 'gender': 'female', 'desc': '25-30岁，健康小麦肤色'},
-        {'name': '短发女模特', 'gender': 'female', 'desc': '25-30岁，短发干练'},
-        {'name': '青年男模特', 'gender': 'male', 'desc': '22-25岁，阳光帅气'},
-        {'name': '成熟男模特', 'gender': 'male', 'desc': '30-35岁，稳重商务'},
-        {'name': '运动型男模特', 'gender': 'male', 'desc': '25-30岁，健康运动'},
-        {'name': '文艺男模特', 'gender': 'male', 'desc': '25-30岁，文艺斯文'},
+        # 女性模特：覆盖不同年龄段、风格和气质
+        {'name': '清纯甜美女模特', 'gender': 'female', 'desc': '20-23岁年轻女性',
+         'style': '清新自然，邻家少女感，圆润脸型，大眼睛，黑色长直发，温柔笑容'},
+        {'name': '优雅知性女模特', 'gender': 'female', 'desc': '28-32岁成熟女性',
+         'style': '气质优雅，职业精英感，精致妆容，中长波浪发，自信从容的表情'},
+        {'name': '酷飒个性女模特', 'gender': 'female', 'desc': '24-27岁时尚女性',
+         'style': '时尚个性，酷飒帅气，利落短发或高马尾，立体五官，微带冷感的气场'},
+        {'name': '健康活力女模特', 'gender': 'female', 'desc': '23-26岁运动女性',
+         'style': '健康阳光，小麦肤色，运动感强，马甲线身材，充满活力的神采'},
+
+        # 男性模特：覆盖不同年龄段、风格和气质
+        {'name': '阳光少年男模特', 'gender': 'male', 'desc': '20-24岁年轻男性',
+         'style': '阳光青春，清新少年感，清秀五官，短发整洁，温暖笑容'},
+        {'name': '成熟稳重男模特', 'gender': 'male', 'desc': '30-35岁成熟男性',
+         'style': '成熟大气，商务精英感，立体五官，短发精干，沉稳自信的气质'},
+        {'name': '型格潮流男模特', 'gender': 'male', 'desc': '25-28岁潮流男性',
+         'style': '时尚型男，潮流个性，个性发型，棱角分明，街头时尚感'},
+        {'name': '斯文儒雅男模特', 'gender': 'male', 'desc': '26-30岁文艺男性',
+         'style': '温文尔雅，书卷气质，文艺范，戴细框眼镜或不戴，温和内敛的表情'},
     ]
 
     # 限制生成数量
@@ -155,9 +168,17 @@ def generate_diverse_models(count: int = 10, dry_run: bool = False) -> list[dict
             request_id = str(uuid4())
 
             try:
-                # 使用基础提示词并添加个性化描述
+                # 构建个性化提示词，融入风格描述
                 base_prompt = base_prompts.get(config['gender'], '')
-                custom_prompt = base_prompt.replace('25至30岁', config['desc'].split('，')[0])
+                # 提取年龄描述并替换
+                age_desc = config['desc']
+                style_desc = config['style']
+
+                # 在基础提示词中插入个性化风格
+                custom_prompt = base_prompt.replace(
+                    '25至30岁，东亚外貌',
+                    f'{age_desc}，东亚外貌，{style_desc}'
+                )
 
                 body = {
                     'model': 'gpt-image-2.5-flare',

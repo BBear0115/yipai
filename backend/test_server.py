@@ -14,7 +14,7 @@ from urllib.error import HTTPError
 from urllib.request import build_opener, HTTPCookieProcessor, Request
 from uuid import uuid4
 
-from PIL import Image
+from PIL import Image, ImageChops
 import server
 
 
@@ -309,11 +309,42 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(json.load(client.open(self.base+'/api/jobs'))['jobs'],[])
 
     def test_watermark_is_in_exported_pixels(self):
-        raw=source((900,1200))
-        result=Image.open(BytesIO(server.watermark(raw)))
+        for size, color in [((900,1200),'#356da0'), ((1600,900),'#d0d0d0'),
+                            ((400,600),'black')]:
+            with self.subTest(size=size,color=color):
+                raw=source(size,color)
+                result=Image.open(BytesIO(server.watermark(raw)))
+                self.assertEqual(result.format,'JPEG')
+                self.assertEqual(result.size,size)
+                baseline=BytesIO()
+                Image.open(BytesIO(raw)).save(baseline,'JPEG',quality=92)
+                # Compare equally encoded files so JPEG rounding alone cannot pass this check.
+                changed=ImageChops.difference(result,Image.open(BytesIO(baseline.getvalue()))).convert('L')
+                changed=changed.point(lambda value:255 if value>12 else 0)
+                bounds=changed.getbbox()
+                self.assertIsNotNone(bounds)
+                left,top,right,bottom=bounds
+                self.assertGreaterEqual(left,size[0]//3)
+                self.assertGreaterEqual(top,int(size[1]*0.8))
+                self.assertLess(right,size[0]-2)
+                self.assertLess(bottom,size[1]-2)
+
+    def test_watermark_has_no_background_or_shadow(self):
+        white=Image.open(BytesIO(server.watermark(source((900,1200),'white'))))
+        self.assertTrue(all(low>=253 for low,high in white.getextrema()))
+        for color in ('#888888','#202020'):
+            with self.subTest(color=color):
+                result=Image.open(BytesIO(server.watermark(source((900,1200),color))))
+                original=int(color[1:3],16)
+                # White artwork may brighten its backdrop; JPEG ringing gets a small tolerance.
+                self.assertTrue(all(low>=original-12 for low,high in result.getextrema()))
+
+    def test_watermark_without_chinese_font_still_exports(self):
+        with patch.object(server,'watermark_font',return_value=None):
+            result=Image.open(BytesIO(server.watermark(source((900,1200)))))
         self.assertEqual(result.format,'JPEG')
         self.assertEqual(result.size,(900,1200))
-        self.assertNotEqual(result.getpixel((820,1150)),(53,109,160))
+        self.assertGreater(result.crop((600,1000,900,1200)).convert('L').getextrema()[1],180)
 
     def test_disguised_gif_is_rejected(self):
         output=BytesIO()
@@ -606,7 +637,7 @@ class BackendTests(unittest.TestCase):
     @patch.object(server,'generate')
     def test_pose_photos_zip_and_delete_are_private(self,generator,credentials):
         owner=self.client(); stranger=self.client()
-        for value in (3,0,9,'4'):
+        for value in (3,0,9,'4',4.0,True):
             with self.assertRaises(HTTPError) as error:
                 self.post(owner,self.payload(workflowType='pose_variation',workflowConfig={'pose_count':value}))
             self.assertEqual(error.exception.code,400)
@@ -743,10 +774,10 @@ class BackendTests(unittest.TestCase):
 
     @patch.object(server, 'credentials', return_value=('test-key', None))
     @patch.object(server, 'generate')
-    def test_role_remake_validates_reference_config_detail_ownership_and_identity_source(self, generator, credentials):
+    def test_role_remake_validates_garment_config_detail_ownership_and_identity_source(self, generator, credentials):
         owner = self.client()
         good = [self.tryon_input('upper'), self.tryon_input('reference')]
-        invalid = [({'clothing_mode':'multi'}, good[:1]),
+        invalid = [({'clothing_mode':'multi'}, good[1:]),
                    ({'clothing_mode':'multi','output_count':4}, good),
                    ({'clothing_mode':'multi'}, [*good, self.tryon_input('detail', garmentRole='lower')]),
                    ({'clothing_mode':'multi'}, [self.tryon_input('upper', size=(200,240)), good[1]]),
@@ -757,6 +788,151 @@ class BackendTests(unittest.TestCase):
             self.assertEqual(error.exception.code, 400)
         self.assertFalse(generator.called)
         self.assertEqual(json.load(owner.open(self.base + '/api/jobs'))['jobs'], [])
+
+    @patch.object(server, 'credentials', return_value=('test-key', None))
+    def test_no_reference_remake_scene_and_pose_reach_provider(self, credentials):
+        from backend.workflows.shooting_plans import SCENE_CONFIGS, POSE_MODIFIERS
+        owner = self.client()
+        for scene_id, scene in SCENE_CONFIGS.items():
+            with self.subTest(scene=scene_id):
+                body = self.payload(workflowType='remake', model='male',
+                                    workflowConfig={'clothing_mode':'multi', 'output_count':1,
+                                                    'shooting_style':scene_id, 'pose_preference':'side'},
+                                    inputImages=[self.tryon_input('upper'), self.tryon_input('lower')])
+                with patch.object(server, 'generate'):
+                    job = self.post(owner, body)['job']
+                self.assertEqual(job['workflowConfig']['shooting_style'], scene_id)
+                self.assertEqual(job['workflowConfig']['pose_preference'], 'side')
+                with patch.object(server, 'request_analysis') as analyze, patch.object(server, 'request_image', return_value=source()) as image:
+                    server.generate(job['id'], 'male', 'remake', job['workflowConfig'])
+                analyze.assert_not_called()
+                image.assert_called_once()
+                prompt = image.call_args.args[0]
+                self.assertIn(scene['name'], prompt)
+                self.assertIn(POSE_MODIFIERS['side'], prompt)
+                self.assertIn('图1是上装商品；图2是下装商品；图3是模特身份', prompt)
+                self.assertIn('已上传的商品必须同时穿在同一位模特身上', prompt)
+
+    @patch.object(server, 'credentials', return_value=('test-key', None))
+    @patch.object(server, 'generate')
+    def test_remake_rejects_invalid_scene_and_pose_before_creating_jobs(self, generator, credentials):
+        owner = self.client()
+        invalid = [{'shooting_style': value} for value in ('unknown', [], {}, 1, None)]
+        invalid += [{'pose_preference': value} for value in ('unknown', [], {}, 1, None)]
+        for fields in invalid:
+            with self.subTest(fields=fields), self.assertRaises(HTTPError) as error:
+                self.post(owner, self.payload(workflowType='remake',
+                          workflowConfig={'clothing_mode':'multi', **fields},
+                          inputImages=[self.tryon_input('upper')]))
+            self.assertEqual(error.exception.code, 400)
+        generator.assert_not_called()
+        self.assertEqual(json.load(owner.open(self.base + '/api/jobs'))['jobs'], [])
+
+    @patch.object(server, 'credentials', return_value=('test-key', None))
+    def test_role_remake_without_reference_generates_three_with_both_garments_and_private_snapshots(self, credentials):
+        owner = self.client(); stranger = self.client()
+        # Keep upload order different from the numbered image roles sent to the provider.
+        inputs = [self.tryon_input('detail', 'orange', size=(160, 160), garmentRole='lower'),
+                  self.tryon_input('lower', 'blue', size=(480, 444)),
+                  self.tryon_input('model', 'purple'), self.tryon_input('upper', 'red', size=(330, 502))]
+        body = self.payload(workflowType='remake', workflowConfig={'clothing_mode':'multi', 'instruction':'搭配棕色皮鞋'}, inputImages=inputs)
+        with patch.object(server, 'generate'):
+            job = self.post(owner, body)['job']
+        self.assertEqual(job['workflowConfig']['output_count'], 3)
+        self.assertIsNone(job['reference'])
+        snapshots = []
+        for item in job['inputImages']:
+            snapshots.append(owner.open(self.base + item['url']).read())
+            with self.assertRaises(HTTPError) as error:
+                stranger.open(self.base + item['url'])
+            self.assertEqual(error.exception.code, 404)
+        requests = []
+        def respond(request, **kwargs):
+            requests.append(json.loads(request.data))
+            return BytesIO(json.dumps({'output':[{'result':base64.b64encode(source()).decode()}]}).encode())
+        with patch.object(server, 'request_analysis') as analyze, patch.object(server, 'urlopen', side_effect=respond):
+            server.generate(job['id'], 'female', 'remake', job['workflowConfig'])
+        analyze.assert_not_called()
+        self.assertEqual(len(requests), 3)  # No separate identity calibration without a pose reference.
+        expected = [server.image_data_url(snapshots[index]) for index in (3, 1, 2, 0)]
+        prompts = []
+        for request in requests:
+            content = request['input'][0]['content']
+            self.assertEqual([item['image_url'] for item in content[1:]], expected)
+            prompt = content[0]['text']; prompts.append(prompt)
+            self.assertIn('图1是上装商品；图2是下装商品；图3是模特身份；图4是服装细节', prompt)
+            self.assertIn('图4只补充图2（下装商品）', prompt)
+            self.assertIn('智能搭配：', prompt)
+            self.assertIn('已上传的商品必须同时穿在同一位模特身上', prompt)
+            self.assertIn('搭配棕色皮鞋', prompt)
+            self.assertNotIn('画面参考', prompt)
+        self.assertEqual(len(set(prompts)), 3)
+        self.assertFalse(server.analysis_path(job['id']).exists())
+        restored = json.load(owner.open(self.base + '/api/jobs/' + job['id']))['job']
+        self.assertEqual(restored['status'], 'succeeded')
+        self.assertEqual(len(restored['images']), 3)
+        self.assertIsNone(restored['reference'])
+        with self.assertRaises(HTTPError) as error:
+            owner.open(self.base + '/api/jobs/' + job['id'] + '/reference')
+        self.assertEqual(error.exception.code, 404)
+        # Regeneration reuses all private role snapshots without introducing a reference.
+        regenerated_inputs = [{**item, 'image':'data:image/jpeg;base64,' + base64.b64encode(raw).decode()}
+                              for item, raw in zip(restored['inputImages'], snapshots)]
+        with patch.object(server, 'generate'):
+            regenerated = self.post(owner, self.payload(workflowType='remake', workflowConfig=restored['workflowConfig'],
+                                                       inputImages=regenerated_inputs))['job']
+        self.assertNotEqual(regenerated['id'], restored['id'])
+        self.assertEqual([item['role'] for item in regenerated['inputImages']], [item['role'] for item in restored['inputImages']])
+        self.assertEqual(regenerated['inputImages'][0]['garmentRole'], 'lower')
+        self.assertIsNone(regenerated['reference'])
+        with patch.object(server, 'request_analysis') as analyze, patch.object(server, 'request_image', return_value=source()) as image:
+            server.generate(regenerated['id'], 'female', 'remake', regenerated['workflowConfig'])
+        analyze.assert_not_called()
+        self.assertEqual(image.call_count, 3)
+
+    @patch.object(server, 'credentials', return_value=('test-key', None))
+    def test_role_remake_without_reference_accepts_single_garments_and_selected_output_count(self, credentials):
+        owner = self.client()
+        for mode, role, count in [('multi', 'upper', 1), ('multi', 'lower', 2), ('single', 'single', 3)]:
+            with self.subTest(role=role, count=count):
+                body = self.payload(model='male', workflowType='remake',
+                                    workflowConfig={'clothing_mode':mode, 'output_count':count}, inputImages=[self.tryon_input(role)])
+                with patch.object(server, 'generate'):
+                    job = self.post(owner, body)['job']
+                self.assertEqual([item['role'] for item in job['inputImages']], [role, 'model'])
+                with patch.object(server, 'request_analysis') as analyze, patch.object(server, 'request_image', return_value=source()) as image:
+                    server.generate(job['id'], 'male', 'remake', job['workflowConfig'])
+                analyze.assert_not_called()
+                self.assertEqual(image.call_count, count)
+                restored = json.load(owner.open(self.base + '/api/jobs/' + job['id']))['job']
+                self.assertEqual(restored['status'], 'succeeded')
+                self.assertEqual(len(restored['images']), count)
+                self.assertIsNone(restored['reference'])
+
+    @patch.object(server, 'credentials', return_value=('test-key', None))
+    def test_role_remake_without_reference_reports_generation_failure_and_resumes_remaining_outputs(self, credentials):
+        owner = self.client()
+        body = self.payload(workflowType='remake', workflowConfig={'clothing_mode':'multi'},
+                            inputImages=[self.tryon_input('upper'), self.tryon_input('lower')])
+        with patch.object(server, 'generate'):
+            job = self.post(owner, body)['job']
+        with patch.object(server, 'request_analysis') as analyze, patch.object(server, 'request_image', side_effect=[source(), ValueError('sensitive upstream text')]) as image:
+            server.generate(job['id'], 'female', 'remake', job['workflowConfig'])
+        analyze.assert_not_called()
+        self.assertEqual(image.call_count, 2)
+        failed = json.load(owner.open(self.base + '/api/jobs/' + job['id']))['job']
+        self.assertEqual(failed['status'], 'failed')
+        self.assertEqual(failed['error'], '图片生成失败，请重新生成')
+        self.assertEqual(len(failed['images']), 1)
+        original_result = server.data_path(job['id'], 'result-1').read_bytes()
+        with patch.object(server, 'request_analysis') as analyze, patch.object(server, 'request_image', return_value=source(color='blue')) as image:
+            server.generate(job['id'], 'female', 'remake', job['workflowConfig'])
+        analyze.assert_not_called()
+        self.assertEqual(image.call_count, 2)
+        self.assertEqual(server.data_path(job['id'], 'result-1').read_bytes(), original_result)
+        restored = json.load(owner.open(self.base + '/api/jobs/' + job['id']))['job']
+        self.assertEqual(restored['status'], 'succeeded')
+        self.assertEqual(len(restored['images']), 3)
 
     @patch.object(server, 'credentials', return_value=('test-key', None))
     def test_role_remake_from_existing_work_keeps_its_identity_without_default_model(self, credentials):

@@ -10,6 +10,9 @@ function freshTryonDraft(image = null) {
     clothingMode: 'multi',
     garments: {upper:image, lower:null, single:null},
     references: [],
+    shootingStyle: 'auto',
+    posePreference: 'balanced',
+    stylingPreset: 'minimal',
     modelImage: null,
     modelFromWork: false,
     detailsEnabled: false,
@@ -49,7 +52,7 @@ function buildTryonWorkflow(state = tryonDraftState) {
   const firstGarment = inputImages.find(image => ['upper','lower','single'].includes(image.role));
   return {
     workflowType:'remake',
-    workflowConfig:{clothing_mode:state.clothingMode, output_count:state.outputCount, instruction:state.instruction.trim().slice(0,500)},
+    workflowConfig:{clothing_mode:state.clothingMode, output_count:state.outputCount, shooting_style:state.shootingStyle, pose_preference:state.posePreference, styling_preset:state.stylingPreset, instruction:state.instruction.trim().slice(0,500)},
     inputImages,
     modelId:state.modelImage ? null : selectedModelId,
     source:firstGarment?.image || null,
@@ -85,17 +88,15 @@ function tryonUploadFeedbackMarkup(kind, role = '') {
   return `<p class="tryon-help" data-tryon-feedback="${kind}:${role}" role="status" hidden></p>`;
 }
 
-function tryonGarmentSlot(role, label, hint) {
+function tryonGarmentSlot(role, label) {
   const image = tryonDraftState.garments[role];
   const details = tryonDraftState.details[role] || [];
   return `<article class="tryon-slot" data-garment-slot="${role}">
-    <div class="tryon-slot-heading"><div><h3>${label}</h3><p>${hint}</p></div>${image ? `<button class="text-button" type="button" data-tryon-remove="${role}">移除</button>` : ''}</div>
-    ${image ? `<div class="tryon-garment-preview">${photo(image, `${label}商品图`)}<span>${label}已上传</span></div>` : `<div class="tryon-empty-slot"><span>${icon('image')}</span><span>上传${label}商品图</span></div>`}
-    <button class="secondary tryon-upload-button" type="button" data-tryon-upload="garment" data-role="${role}">${image ? '更换图片' : `上传${label}`} ${icon(image ? 'refresh' : 'plus')}</button>
+    <div class="tryon-slot-heading"><h3>${label}</h3>${image ? `<button class="text-button" type="button" data-tryon-remove="${role}">移除</button>` : ''}</div>
+    ${image ? `<div class="tryon-garment-preview">${photo(image, `${label}商品图`)}</div><button class="secondary tryon-upload-button" type="button" data-tryon-upload="garment" data-role="${role}">更换图片 ${icon('refresh')}</button>` : `<button class="tryon-empty-slot tryon-upload-zone" type="button" data-tryon-upload="garment" data-role="${role}"><span>${icon('plus')}</span><span>上传${label}</span></button>`}
     <div class="tryon-source-actions"><button class="text-button" type="button" data-tryon-camera="garment" data-role="${role}">拍照 ${icon('camera')}</button><button class="text-button" type="button" data-remake-work-picker="garment" data-role="${role}">从作品选择</button></div>
     ${tryonUploadFeedbackMarkup('garment', role)}
-    <p class="tryon-help" data-tryon-resolution>支持 PNG / JPG / WebP；宽高至少 256 像素，单张不超过 20 MB。</p>
-    ${tryonDraftState.detailsEnabled ? `<div class="tryon-slot-details"><div class="tryon-detail-heading"><strong>这件服装的细节图</strong><span>${details.length} / ${TRYON_MAX_DETAILS}</span></div><p>${image ? '仅补充面料、口袋、纽扣等局部，不会改变人物或场景。' : `先上传${label}商品图，再添加对应细节。`}</p><div class="tryon-thumbs">${details.map((detail,index)=>tryonPreview(detail, `${label}细节 ${index+1}`, `detail:${role}:${index}`, '移除')).join('')}</div><button class="text-button" type="button" data-tryon-upload="detail" data-role="${role}" ${!image || tryonDetailCount() >= TRYON_MAX_DETAILS ? 'disabled' : ''}>添加细节图 ${icon('plus')}</button>${tryonUploadFeedbackMarkup('detail', role)}</div>` : ''}
+    ${tryonDraftState.detailsEnabled ? `<div class="tryon-slot-details"><div class="tryon-detail-heading"><strong>细节图</strong>${details.length ? `<span>${details.length} 张</span>` : ''}</div><div class="tryon-thumbs">${details.map((detail,index)=>tryonPreview(detail, `${label}细节 ${index+1}`, `detail:${role}:${index}`, '移除')).join('')}</div><button class="text-button" type="button" data-tryon-upload="detail" data-role="${role}" aria-label="添加${label}细节图" ${!image || tryonDetailCount() >= TRYON_MAX_DETAILS ? 'disabled' : ''}>${image ? '添加细节图' : `先上传${label}`} ${icon('plus')}</button>${tryonUploadFeedbackMarkup('detail', role)}</div>` : ''}
   </article>`;
 }
 
@@ -110,34 +111,33 @@ function renderTryonStudio() {
   const garmentImages = tryonPrimaryImages(state);
   const detailsCount = tryonDetailCount(state);
   const modelContent = directModel
-    ? `<div class="tryon-model-preview">${photo(state.modelImage, '自定义模特照片')}<div><strong>${state.modelFromWork?'沿用作品中的人物':'自定义人物参考'}</strong><p>只用于人物身份，不决定服装或场景。</p></div><button class="text-button" type="button" data-tryon-remove="model">移除</button></div>`
+    ? `<div class="tryon-model-preview">${photo(state.modelImage, '自定义模特照片')}<div><strong>${state.modelFromWork?'沿用作品中的人物':'自定义人物参考'}</strong></div><button class="text-button" type="button" data-tryon-remove="model">移除</button></div>`
     : chosenLibraryModel
-      ? `<div class="tryon-model-preview">${photo(chosenLibraryModel.image, chosenLibraryModel.name)}<div><strong>${escapeHtml(chosenLibraryModel.name)}</strong><p>模特照片只用于人物身份。</p></div><button class="text-button" type="button" data-clear-library-model>取消选择</button></div>`
-      : `<div class="tryon-identity-note">默认使用所选性别的模特；参考照片只提供拍法，不会照搬其中的人物。</div>`;
+      ? `<div class="tryon-model-preview">${photo(chosenLibraryModel.image, chosenLibraryModel.name)}<div><strong>${escapeHtml(chosenLibraryModel.name)}</strong></div><button class="text-button" type="button" data-clear-library-model>取消选择</button></div>`
+      : '';
   const refsMarkup = refs.length
     ? `<div class="tryon-thumbs">${refs.map((image,index)=>tryonPreview(image, `参考图 ${index+1}`, `reference:${index}`)).join('')}</div>`
-    : `<div class="tryon-empty-slot tryon-reference-empty"><span>${icon('image')}</span><span>先添加一张喜欢的参考照片，或从已有作品选择</span></div>`;
+    : `<button class="tryon-empty-slot tryon-upload-zone tryon-reference-empty" type="button" data-tryon-upload="reference"><span>${icon('plus')}</span><span>添加参考图</span></button>`;
   app.innerHTML = `<section class="page detail-page tryon-page">
     ${subTop('拍同款', home)}
-    <p class="tryon-page-caption">照着喜欢的照片，让模特穿上你的商品。参考照片用于构图、姿势、场景和光线，每张分别输出独立成片。</p>
     <div class="tryon-layout">
       <div class="tryon-main-column">
         <section class="tryon-card tryon-garments-card">
-          <div class="tryon-section-heading"><div><span class="eyebrow">商品输入</span><h2>选择服装类型</h2><p>上下装可只传一件；也可切换为连体/全身服装。</p></div></div>
+          <div class="tryon-section-heading"><h2>商品图</h2><span class="tryon-optional">至少 1 件</span></div>
           <div class="tryon-mode-switch" role="group" aria-label="服装类型">
             <button type="button" data-clothing-mode="multi" class="${isMulti?'selected':''}" aria-pressed="${isMulti}">上装 / 下装</button>
             <button type="button" data-clothing-mode="single" class="${!isMulti?'selected':''}" aria-pressed="${!isMulti}">连体 / 全身</button>
           </div>
-          <div class="tryon-garment-grid">${activeGarments.map(role => role === 'upper' ? tryonGarmentSlot(role,'上装','上衣、外套等') : role === 'lower' ? tryonGarmentSlot(role,'下装','裤子、裙装等') : tryonGarmentSlot(role,'连体 / 全身','连衣裙、连体衣等')).join('')}</div>
+          <div class="tryon-garment-grid">${activeGarments.map(role => tryonGarmentSlot(role,({upper:'上装',lower:'下装',single:'连体 / 全身'})[role])).join('')}</div>
         </section>
         <section class="tryon-card">
-          <div class="tryon-section-heading"><div><span class="eyebrow">画面控制</span><h2>参考照片 <span class="tryon-count">${refs.length} / ${TRYON_MAX_REFERENCES}</span></h2><p>先分析参考照片的构图、姿势、场景与光线，再结合你的商品重拍。截图中的界面、价格和文字会被忽略。</p></div><button class="secondary" type="button" data-tryon-upload="reference" ${refs.length>=TRYON_MAX_REFERENCES?'disabled':''}>添加参考图 ${icon('plus')}</button></div>
+          <div class="tryon-section-heading"><h2>参考照片 <span class="tryon-count">${refs.length} / ${TRYON_MAX_REFERENCES}</span></h2>${refs.length ? `<button class="secondary" type="button" data-tryon-upload="reference" ${refs.length>=TRYON_MAX_REFERENCES?'disabled':''}>添加参考图 ${icon('plus')}</button>` : '<span class="tryon-optional">可选 · 不传则自动搭配</span>'}</div>
           ${refsMarkup}
           <div class="tryon-source-actions"><button class="text-button" type="button" data-tryon-camera="reference">拍摄参考照 ${icon('camera')}</button><button class="text-button" type="button" data-remake-work-picker="reference">从作品选择 ${icon('image')}</button></div>
           ${tryonUploadFeedbackMarkup('reference')}
         </section>
         <section class="tryon-card">
-          <div class="tryon-section-heading"><div><span class="eyebrow">模特身份</span><h2>人物参考 <span class="tryon-optional">可选</span></h2><p>人物照片只用于身份；与拍摄参考同时使用时会单独校准人物，耗时稍长。建议上传清晰正脸或上半身照。</p></div></div>
+          <div class="tryon-section-heading"><h2>人物参考</h2><span class="tryon-optional">可选</span></div>
           <div class="tryon-gender-switch" role="group" aria-label="默认模特性别">${['female','male'].map(value=>`<button type="button" data-model="${value}" class="${model===value?'selected':''}" aria-pressed="${model===value}">${modelName(value)}</button>`).join('')}</div>
           ${modelContent}
           <div class="tryon-model-actions"><button class="secondary" type="button" data-tryon-upload="model">上传人物照片 ${icon('plus')}</button><button class="text-button" type="button" data-open-picker>从模特库选择</button></div>
@@ -146,23 +146,42 @@ function renderTryonStudio() {
       </div>
       <aside class="tryon-side-column">
         <section class="tryon-card">
-          <div class="tryon-section-heading"><div><span class="eyebrow">商品细节</span><h2>服装细节参考</h2></div><label class="tryon-switch"><input type="checkbox" id="tryon-details-toggle" ${state.detailsEnabled?'checked':''}><span></span><b>${state.detailsEnabled?'开启':'关闭'}</b></label></div>
-          <p class="tryon-help">开启后最多添加 4 张细节图，并绑定到对应服装。关闭时已选细节会保留在草稿中，但不会提交。</p>
-          ${state.detailsEnabled ? `<p class="tryon-detail-total">已添加 ${detailsCount} / ${TRYON_MAX_DETAILS} 张</p>` : ''}
+          <div class="tryon-section-heading tryon-details-heading"><h2 id="tryon-details-title">服装细节参考</h2><label class="tryon-switch"><input type="checkbox" id="tryon-details-toggle" aria-labelledby="tryon-details-title" ${state.detailsEnabled?'checked':''}><span></span><b>${state.detailsEnabled?'开启':'关闭'}</b></label></div>
+          ${state.detailsEnabled ? `<p class="tryon-detail-total">在商品图下添加 · ${detailsCount} / ${TRYON_MAX_DETAILS} 张</p>` : ''}
         </section>
         <section class="tryon-card">
-          <div class="tryon-section-heading"><div><span class="eyebrow">生成方案</span><h2>每组输出</h2></div></div>
+          <div class="tryon-section-heading"><h2>${refs.length ? '每张参考生成' : '生成数量'}</h2></div>
           <div class="tryon-count-options">${[1,2,3].map(count=>`<button type="button" data-output-count="${count}" class="${state.outputCount===count?'selected':''}" aria-pressed="${state.outputCount===count}">${count} 张</button>`).join('')}</div>
-          <p class="tryon-help">${refs.length ? `${refs.length} 张参考图 × 每组 ${state.outputCount} 张` : '先添加参考照片'}；预计共 ${tryonTotalOutputCount(state)} 张。</p>
+          ${refs.length > 1 ? `<p class="tryon-help">${refs.length} 张参考 × ${state.outputCount} 张，共 ${tryonTotalOutputCount(state)} 张</p>` : ''}
+        </section>
+        ${refs.length ? '' : `<section class="tryon-card">
+          <div class="tryon-section-heading"><h2>拍摄方向</h2></div>
+          <div class="tryon-plan-options" role="group" aria-label="拍摄方向">
+            ${[['auto','自由探索'],['studio','电商棚拍'],['lookbook','城市 Lookbook'],['lifestyle','室内生活'],['magazine','时尚杂志'],['korean','韩系清透'],['street','街头潮流'],['minimal_japanese','简约日系'],['vintage','复古胶片']].map(([value,label])=>`<button type="button" data-shooting-style="${value}" class="${state.shootingStyle===value?'selected':''}" aria-pressed="${state.shootingStyle===value}">${label}</button>`).join('')}
+          </div>
+          <p class="tryon-help">自由探索会尝试多种风格；选定方向后，生成同风格的不同姿势和构图。</p>
         </section>
         <section class="tryon-card">
-          <label class="field-label" for="tryon-instruction">补充搭配要求 <span class="tryon-optional">可选 · 最多 500 字</span></label>
-          <textarea id="tryon-instruction" class="field-input" maxlength="500" placeholder="例如：搭配简洁的浅色鞋履，整体适合春季通勤。">${escapeHtml(state.instruction)}</textarea>
-          <p class="tryon-help">参考照片提供拍摄气质，其余穿搭会围绕你的商品协调搭配。商品本身的颜色、图案与结构优先保留。</p>
-          <p class="tryon-character-count"><span id="tryon-instruction-count">${state.instruction.length}</span> / 500</p>
+          <div class="tryon-section-heading"><h2>姿势偏好</h2></div>
+          <div class="tryon-plan-options" role="group" aria-label="姿势偏好">
+            ${[['balanced','均衡展示'],['frontal','更多正面'],['dynamic','更多动态'],['side','更多侧面']].map(([value,label])=>`<button type="button" data-pose-preference="${value}" class="${state.posePreference===value?'selected':''}" aria-pressed="${state.posePreference===value}">${label}</button>`).join('')}
+          </div>
+          <p class="tryon-help">控制生成图片的姿势倾向；均衡展示会混合多种角度和姿态。</p>
+        </section>
+        <section class="tryon-card">
+          <div class="tryon-section-heading"><h2>搭配风格</h2></div>
+          <div class="tryon-plan-options" role="group" aria-label="搭配风格">
+            ${[['minimal','极简搭配'],['coordinated','协调搭配'],['seasonal','应季搭配']].map(([value,label])=>`<button type="button" data-styling-preset="${value}" class="${state.stylingPreset===value?'selected':''}" aria-pressed="${state.stylingPreset===value}">${label}</button>`).join('')}
+          </div>
+          <p class="tryon-help">极简：纯色基础款；协调：色彩呼应；应季：符合商品季节感的完整造型。</p>
+        </section>`}
+        <section class="tryon-card">
+          <label class="field-label" for="tryon-instruction">搭配要求 <span class="tryon-optional">可选</span></label>
+          <textarea id="tryon-instruction" class="field-input" maxlength="500" placeholder="如：通勤风，搭配棕色皮鞋">${escapeHtml(state.instruction)}</textarea>
+          <p class="tryon-character-count" id="tryon-character-count" ${state.instruction.length?'':'hidden'}><span id="tryon-instruction-count">${state.instruction.length}</span> / 500</p>
         </section>
         <div class="tryon-submit-error" id="tryon-submit-error" role="alert" hidden></div>
-        <div class="bottom-action tryon-bottom-action"><button id="generate" class="primary" type="button" ${garmentImages.length && refs.length?'':'disabled'}>生成 ${tryonTotalOutputCount(state)} 张图片 ${icon('arrow')}</button><p class="helper">${refs.length ? '商品、参考和细节图片会按用途分别处理。' : '请先添加参考照片，再上传至少一件商品。'}</p></div>
+        <div class="bottom-action tryon-bottom-action"><button id="generate" class="primary" type="button" ${garmentImages.length?'':'disabled'}>生成 ${tryonTotalOutputCount(state)} 张图片 ${icon('arrow')}</button>${!garmentImages.length ? '<p class="helper">请添加至少一件商品</p>' : ''}</div>
       </aside>
     </div>
     ${errorSlot}
@@ -170,6 +189,9 @@ function renderTryonStudio() {
   bindHeader(home);
   app.querySelectorAll('[data-clothing-mode]').forEach(button=>button.onclick=()=>{state.clothingMode=button.dataset.clothingMode; tryonDraftRevision++; pendingSubmission=null; renderTryonStudio();});
   app.querySelectorAll('[data-output-count]').forEach(button=>button.onclick=()=>{state.outputCount=Number(button.dataset.outputCount); tryonDraftRevision++; pendingSubmission=null; renderTryonStudio();});
+  app.querySelectorAll('[data-shooting-style]').forEach(button=>button.onclick=()=>{state.shootingStyle=button.dataset.shootingStyle; tryonDraftRevision++; pendingSubmission=null; renderTryonStudio();});
+  app.querySelectorAll('[data-pose-preference]').forEach(button=>button.onclick=()=>{state.posePreference=button.dataset.posePreference; tryonDraftRevision++; pendingSubmission=null; renderTryonStudio();});
+  app.querySelectorAll('[data-styling-preset]').forEach(button=>button.onclick=()=>{state.stylingPreset=button.dataset.stylingPreset; tryonDraftRevision++; pendingSubmission=null; renderTryonStudio();});
   app.querySelectorAll('[data-tryon-upload]').forEach(button=>button.onclick=()=>openTryonFilePicker(button.dataset.tryonUpload,button.dataset.role));
   app.querySelectorAll('[data-tryon-camera]').forEach(button=>button.onclick=()=>openTryonFilePicker(button.dataset.tryonCamera,button.dataset.role,true));
   app.querySelectorAll('[data-remake-work-picker]').forEach(button=>button.onclick=()=>openRemakeWorkPicker(button.dataset.remakeWorkPicker,button.dataset.role));
@@ -182,19 +204,10 @@ function renderTryonStudio() {
     state.instruction=event.target.value.slice(0,500);
     tryonDraftRevision++; pendingSubmission=null;
     app.querySelector('#tryon-instruction-count').textContent=String(state.instruction.length);
+    app.querySelector('#tryon-character-count').hidden=!state.instruction.length;
   };
   app.querySelector('#generate').onclick=submitTryon;
   watchImages();
-  app.querySelectorAll('[data-garment-slot]').forEach(slot=>{
-    const image=slot.querySelector('.tryon-garment-preview img');
-    if (!image) return;
-    const showResolution=()=>{
-      if (image.naturalWidth && Math.min(image.naturalWidth,image.naturalHeight)<512) {
-        slot.querySelector('[data-tryon-resolution]').textContent=`已上传 ${image.naturalWidth} × ${image.naturalHeight} 像素，可继续生成；图片较小，建议使用更清晰的原图保留服装细节。`;
-      }
-    };
-    if (image.complete) showResolution(); else image.addEventListener('load',showResolution,{once:true});
-  });
 }
 
 function openTryonFilePicker(kind, role, camera = false) {
@@ -283,7 +296,6 @@ function showTryonError(message) {
 
 async function submitTryon() {
   const workflow=buildTryonWorkflow();
-  if (!tryonDraftState.references.length) {showTryonError('请先添加至少一张参考照片。');return;}
   if (!workflow.source) {showTryonError('请至少上传一张主商品图：上装、下装或连体/全身服装。');return;}
   const sizes=tryonPayloadSizes();
   if (sizes.inputBytes>TRYON_MAX_INPUT_BYTES) {showTryonError('图片压缩后总大小超过 20 MB，请减少图片数量或重新选择较小的图片。');return;}

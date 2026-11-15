@@ -108,9 +108,11 @@ def build_tryon_prompt(model, inputs, config, candidate_index=0, reference_plan=
         if not identity and not product_identity:
             lines.append(f'没有独立模特身份图，保留图{reference}人物的脸部身份、发型和年龄感。')
     else:
-        directions = ('根据商品的色彩、面料和季节设计协调、有质感的商业穿搭',
-                      '围绕同一商品设计另一套协调搭配，让配套单品和拍摄气质与上一款有明显区别')
-        lines.append(f'智能搭配：{directions[min(candidate_index, 1)]}；合理补齐未提供的上装、下装、鞋履和必要配饰，完整展示商品，搭配不能遮挡关键细节。根据服装设计自然姿势与合适拍摄场景。')
+        directions = ('根据商品的色彩、面料和季节设计协调、有质感的商业穿搭，自然站姿展示完整造型',
+                      '保留全部已上传商品，以侧身走动或回眸的自然动态展示造型，改变机位和姿势',
+                      '保留全部已上传商品，以自然坐姿或倚靠姿势展示造型，调整构图但保证各件商品完整可见')
+        lines.append(f'智能搭配：{directions[min(candidate_index, len(directions) - 1)]}；合理补齐未提供的上装、下装、鞋履和必要配饰，完整展示商品，搭配不能遮挡关键细节。根据服装设计自然姿势与合适拍摄场景。')
+        lines.append('已上传的商品必须同时穿在同一位模特身上，只补齐未提供的单品，不得以搭配为由替换已上传的上装或下装。')
         lines.append('不要沿用模特身份图中的服装、裤子、鞋、姿势或灰底背景，不要机械地给所有商品搭配灰色长裤和白色运动鞋。')
     if identity:
         lines.append(f'图{identity}只提供模特脸型、五官、发型和可识别身份，不提供其原穿搭、鞋履、背景或固定姿势。最终身份使用图{identity}；脸、颈部与身体肤色和场景光线自然连续，不做贴脸或面具。')

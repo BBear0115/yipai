@@ -7,5 +7,6 @@ venv/
 __pycache__/
 *.pyc
 backend/data/
+/yipai.db
 # Public research page snapshots; cleaned text evidence is versioned instead.
 research/onepage/*.html

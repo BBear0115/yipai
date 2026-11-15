@@ -9,21 +9,19 @@ async function context(initialHash = '') {
   const location = {hash:initialHash};
   const listeners = {};
   const classList = {add(){},remove(){},toggle(){}};
-  const element = {style:{},classList,setAttribute(){},addEventListener(){},querySelector(){return {...element};},querySelectorAll(){return [];},focus(){},appendChild(){},insertBefore(){},replaceWith(){},remove(){},click(){},getAttribute(){return '';},setAttribute(){},removeAttribute(){},children:[],innerHTML:'',textContent:'',dataset:{},inert:false};
+  const element = {style:{setProperty(){}},classList,setAttribute(){},addEventListener(){},querySelector(){return {...element};},querySelectorAll(){return [];},focus(){},appendChild(){},insertBefore(){},replaceWith(){},remove(){},click(){},getAttribute(){return '';},setAttribute(){},removeAttribute(){},children:[],innerHTML:'',textContent:'',dataset:{},inert:false};
   const window = {scrollTo(){},addEventListener(name,fn){listeners[name]=fn;},history:{pushState(_state,_title,hash){location.hash=hash;},replaceState(_state,_title,hash){location.hash=hash;}}};
-  const document = {body:{classList},querySelector:()=>({...element}),querySelectorAll:()=>[],getElementById:()=>({...element}),addEventListener(name,fn){listeners[`document:${name}`]=fn;},createElement(tag){if(tag==='template')return {content:{firstElementChild:{...element}},set innerHTML(_value){}};return {...element};}};
+  const document = {body:{classList,appendChild(){}},querySelector:()=>({...element}),querySelectorAll:()=>[],getElementById:()=>({...element}),addEventListener(name,fn){listeners[`document:${name}`]=fn;},removeEventListener(){},createElement(tag){if(tag==='template')return {content:{firstElementChild:{...element}},set innerHTML(_value){}};return {...element};}};
   const sandbox = vm.createContext({
     document,window,location,localStorage:{getItem(){},setItem(){},removeItem(){}},crypto:webcrypto,
-    setTimeout(){return 1;},clearTimeout(){},setInterval(){return 1;},
+    setTimeout(){return 1;},clearTimeout(){},setInterval(){return 1;},clearInterval(){},
     fetch:async()=>({ok:true,json:async()=>({ready:true,jobs:[],posts:[]})})
   });
-  vm.runInContext('openBatchUpload=()=>{}',sandbox);
-  vm.runInContext(fs.readFileSync(path.join(__dirname,'../mockup/community.js'),'utf8'),sandbox);
-  vm.runInContext(fs.readFileSync(path.join(__dirname,'../mockup/studio.js'),'utf8'),sandbox);
-  vm.runInContext(fs.readFileSync(path.join(__dirname,'../mockup/tryon.js'),'utf8'),sandbox);
-  vm.runInContext(fs.readFileSync(path.join(__dirname,'../mockup/remake.js'),'utf8'),sandbox);
-  vm.runInContext(fs.readFileSync(path.join(__dirname,'../mockup/app.js'),'utf8'),sandbox);
-  vm.runInContext(fs.readFileSync(path.join(__dirname,'../mockup/models.js'),'utf8'),sandbox);
+  // Load the same modules, in the same order, as the browser entry point.
+  const html = fs.readFileSync(path.join(__dirname,'../mockup/index.html'),'utf8');
+  for (const [,src] of html.matchAll(/<script src="([^"?]+)(?:\?[^\"]*)?"><\/script>/g)) {
+    vm.runInContext(fs.readFileSync(path.join(__dirname,'../mockup',src),'utf8'),sandbox,{filename:src});
+  }
   await vm.runInContext('sessionReady',sandbox);
   vm.runInContext('waiting=()=>{};prepare=()=>{};toast=()=>{};pollJobs=async()=>{};',sandbox);
   return sandbox;
@@ -356,6 +354,86 @@ test('pose thumbnail selection controls the large image, viewer, sharing, and sa
   assert.equal(vm.runInContext("controls['#pose-result-index'].textContent",ctx),'2');
 });
 
+test('comparison modes restore image opening and dispose sliders when leaving the result',async()=>{
+  const ctx=await context();
+  vm.runInContext(`
+    controls={};
+    originalQuery=document.querySelector;
+    document.querySelector=selector=>controls[selector]||=(originalQuery(selector));
+    modeButtons=['side-by-side','slider'].map(mode=>({dataset:{mode},classList:{toggle(){}}}));
+    document.querySelectorAll=selector=>selector==='[data-mode]'?modeButtons:[];
+    destroyed=0;
+    createCompareSlider=()=>({destroy(){destroyed++}});
+    viewed=[];openViewer=item=>viewed.push(item.image);
+    renderResult({id:'result',model:'female',status:'succeeded',image:'/effect',original:'/input'});
+    modeButtons[1].onclick();
+  `,ctx);
+  assert.equal(vm.runInContext("controls['#result-primary'].onclick",ctx),null);
+  vm.runInContext(`
+    modeButtons[0].onclick();
+    controls['#result-primary'].onclick();
+    controls['#result-primary'].onkeydown({key:'Enter',preventDefault(){}});
+    modeButtons[1].onclick();
+    setScreen('home',true);
+  `,ctx);
+  assert.deepEqual(Array.from(vm.runInContext('viewed',ctx)),['/effect','/effect']);
+  assert.equal(vm.runInContext('destroyed',ctx),2);
+});
+
+test('single image export omits an absent image index and retains explicit gallery indices',async()=>{
+  const ctx=await context();
+  vm.runInContext(`
+    links=[];
+    document.createElement=()=>({click(){links.push(this)},remove(){}});
+    exportJob={image:'/effect',workflowType:'background_change',workflowConfig:{scene_type:'beach'},created:'2026-11-15T00:00:00Z'};
+    downloadSingleImage(exportJob);
+    downloadSingleImage(exportJob,'/effect-2',2);
+  `,ctx);
+  const files=Array.from(vm.runInContext('links.map(link=>link.download)',ctx));
+  assert.match(files[0],/^衣拍_背景替换_海边_\d{8}_\d{6}\.jpg$/);
+  assert.match(files[1],/^衣拍_背景替换_海边_\d{8}_\d{6}_2\.jpg$/);
+});
+
+test('batch queue saturation preserves unsubmitted pictures and their idempotency keys for retry',async()=>{
+  const ctx=await context();
+  vm.runInContext(`
+    controls={};
+    originalQuery=document.querySelector;
+    layer=originalQuery('layer');
+    layer.querySelector=selector=>controls[selector]||=(originalQuery(selector));
+    openOverlay=()=>layer;closeOverlay=()=>{};watchImages=()=>{};
+    revoked=[];URL={revokeObjectURL:url=>revoked.push(url)};
+    batchFiles=['one','two','three'].map(id=>({name:id,preview:'blob:'+id,data:'image:'+id,idempotencyKey:id}));
+    calls=[];
+    api=async(path,options)=>{
+      calls.push(JSON.parse(options.body));
+      if(calls.length>1)throw Error('排队任务已达上限');
+      return {job:{id:'submitted',model:'female',status:'queued',created:new Date().toISOString()},queueCount:1};
+    };
+    openBatchResults=(jobs,message)=>{batchNotice=message};
+    openBatchUpload([],true);
+  `,ctx);
+  await vm.runInContext("controls['#batch-submit'].onclick()",ctx);
+  assert.deepEqual(Array.from(vm.runInContext('batchFiles.map(file=>file.idempotencyKey)',ctx)),['two','three']);
+  assert.deepEqual(Array.from(vm.runInContext('revoked',ctx)),['blob:one']);
+  assert.match(vm.runInContext('batchNotice',ctx),/2 张未提交/);
+  assert.equal(vm.runInContext('batchSubmitting',ctx),false);
+});
+
+test('leaving generation cleans up its progress animation',async()=>{
+  const ctx=await context();
+  const code=fs.readFileSync(path.join(__dirname,'../mockup/app.js'),'utf8');
+  vm.runInContext(code.slice(code.indexOf('function waiting()'),code.indexOf('function renderJob(')),ctx);
+  vm.runInContext(`
+    destroyed=0;createProgressStage=()=>({destroy(){destroyed++}});
+    active={id:'job',model:'female',status:'queued'};
+    waiting();
+    navigate('#home');
+  `,ctx);
+  assert.equal(vm.runInContext('destroyed',ctx),1);
+  assert.equal(vm.runInContext('progressStage',ctx),null);
+});
+
 test('pose progress advances as individual image files complete',async()=>{
   const ctx=await context();
   const code=fs.readFileSync(path.join(__dirname,'../mockup/app.js'),'utf8');
@@ -582,12 +660,80 @@ test('开拍 submits only its product and model, preserving the advanced remake 
   assert.equal(vm.runInContext('tryonDraftState.references.length',ctx),1);
 });
 
-test('拍同款 blocks missing references before requesting generation',async()=>{
+test('拍同款 still blocks submission without an active garment',async()=>{
   const ctx=await context();
-  vm.runInContext(`tryonDraftState.garments.upper='data:image/jpeg;base64,product';calls=0;generate=async()=>{calls++};showTryonError=message=>lastError=message;`,ctx);
+  vm.runInContext(`tryonDraftState.references=['data:image/jpeg;base64,reference'];calls=0;generate=async()=>{calls++};showTryonError=message=>lastError=message;`,ctx);
   await vm.runInContext('submitTryon()',ctx);
   assert.equal(vm.runInContext('calls',ctx),0);
-  assert.match(vm.runInContext('lastError',ctx),/参考照片/);
+  assert.match(vm.runInContext('lastError',ctx),/主商品图/);
+});
+
+test('拍同款 enables and submits upper, lower, paired or single garments without a reference',async t=>{
+  for (const [mode,roles] of [['multi',['upper']],['multi',['lower']],['multi',['upper','lower']],['single',['single']]]) {
+    await t.test(roles.join('+'),async()=>{
+      const ctx=await context('#remake');
+      ctx.clothingModeForTest=mode;ctx.rolesForTest=roles;
+      vm.runInContext(`
+        tryonDraftState.clothingMode=clothingModeForTest;
+        for(const role of rolesForTest) tryonDraftState.garments[role]='data:image/jpeg;base64,'+role;
+        draft='data:image/jpeg;base64,basic';model='male';
+        renderTryonStudio();calls=[];navigate=route=>{location.hash=route};
+        api=async(path,options)=>{calls.push(JSON.parse(options.body));return {job:{id:'new',status:'queued',created:new Date().toISOString()}}};
+      `,ctx);
+      const html=vm.runInContext('app.innerHTML',ctx);
+      assert.doesNotMatch(html,/id="generate"[^>]*disabled/);
+      assert.match(html,/<h2>生成数量<\/h2>/);
+      await vm.runInContext('submitTryon()',ctx);
+      const body=JSON.parse(JSON.stringify(vm.runInContext('calls[0]',ctx)));
+      assert.equal(body.workflowType,'remake');
+      assert.equal(body.workflowConfig.clothing_mode,mode);
+      assert.equal(body.workflowConfig.output_count,3);
+      assert.equal(body.workflowConfig.shooting_style,'auto');
+      assert.match(html,/<h2>拍摄方向<\/h2>/);
+      assert.deepEqual(body.inputImages.map(item=>item.role),roles);
+      assert.equal(body.image,`data:image/jpeg;base64,${roles[0]}`);
+      assert.equal(body.model,'male');
+      assert.equal(body.reference,undefined);
+      assert.equal(vm.runInContext('location.hash',ctx),'#job/new');
+      assert.equal(vm.runInContext('tryonPrimaryImages().length',ctx),0);
+      assert.equal(vm.runInContext('draft',ctx),'data:image/jpeg;base64,basic');
+    });
+  }
+});
+
+test('拍同款 carries a selected no-reference shooting style into the job',async()=>{
+  const ctx=await context('#remake');
+  vm.runInContext(`
+    resetTryonDraft('data:image/jpeg;base64,upper');
+    tryonDraftState.shootingStyle='lookbook';draft='data:image/jpeg;base64,basic';
+    renderTryonStudio();calls=[];navigate=route=>{location.hash=route};
+    api=async(path,options)=>{calls.push(JSON.parse(options.body));return {job:{id:'new',status:'queued',created:new Date().toISOString()}}};
+  `,ctx);
+  assert.match(vm.runInContext('app.innerHTML',ctx),/城市 Lookbook/);
+  await vm.runInContext('submitTryon()',ctx);
+  assert.equal(vm.runInContext('calls[0].workflowConfig.shooting_style',ctx),'lookbook');
+});
+
+test('adding and removing optional references updates output totals while keeping garment generation available',async()=>{
+  const ctx=await context('#remake');
+  vm.runInContext(`
+    resetTryonDraft('data:image/jpeg;base64,upper');tryonDraftState.outputCount=2;
+    normalizeTryonFile=async file=>file.image;renderTryonStudio();
+  `,ctx);
+  assert.equal(vm.runInContext('tryonTotalOutputCount()',ctx),2);
+  await vm.runInContext(`addTryonFiles('reference',undefined,[{image:'data:image/jpeg;base64,ref1'},{image:'data:image/jpeg;base64,ref2'}])`,ctx);
+  vm.runInContext('renderTryonStudio()',ctx);
+  assert.equal(vm.runInContext('tryonTotalOutputCount()',ctx),4);
+  assert.match(vm.runInContext('app.innerHTML',ctx),/<h2>每张参考生成<\/h2>/);
+  vm.runInContext("removeTryonInput('reference:0')",ctx);
+  assert.equal(vm.runInContext('tryonTotalOutputCount()',ctx),2);
+  vm.runInContext("removeTryonInput('reference:0')",ctx);
+  const html=vm.runInContext('app.innerHTML',ctx);
+  assert.doesNotMatch(html,/id="generate"[^>]*disabled/);
+  assert.match(html,/<h2>生成数量<\/h2>/);
+  const workflow=JSON.parse(JSON.stringify(vm.runInContext('buildTryonWorkflow()',ctx)));
+  assert.equal(workflow.workflowConfig.output_count,2);
+  assert.deepEqual(workflow.inputImages.map(item=>item.role),['upper']);
 });
 
 test('returning to remake preserves its garment and references independently of the basic draft',async()=>{
@@ -753,6 +899,41 @@ test('try-on regeneration resends every saved input URL and workflow setting',as
   assert.deepEqual(body.inputImages.map(item=>item.image),['data:image/jpeg;base64,input-1','data:image/jpeg;base64,input-2','data:image/jpeg;base64,input-3']);
 });
 
+test('拍同款 without a reference shows its gallery and regenerates all garment, model and detail snapshots',async()=>{
+  const ctx=await context();
+  ctx.savedJobForTest={
+    id:'abcdef0123456789abcdef0123456789',original:'/api/jobs/old/input',image:'/out-1',images:['/out-1','/out-2','/out-3'],
+    model:'male',workflowType:'remake',status:'succeeded',date:'today',reference:null,
+    workflowConfig:{clothing_mode:'multi',output_count:3,instruction:'棕色皮鞋'},
+    inputImages:[{role:'upper',url:'/api/jobs/old/input-1'},{role:'lower',url:'/api/jobs/old/input-2'},
+      {role:'model',url:'/api/jobs/old/input-3'},{role:'detail',garmentRole:'lower',url:'/api/jobs/old/input-4'}]
+  };
+  vm.runInContext(`
+    regenerateButton={};const defaultQuery=document.querySelector;
+    document.querySelector=selector=>selector==='#regenerate'?regenerateButton:defaultQuery(selector);
+    sourceData=async url=>'data:image/jpeg;base64,'+url.split('/').pop();
+    calls=[];navigate=route=>{location.hash=route};
+    api=async(path,options)=>{calls.push(JSON.parse(options.body));return {job:{id:'regenerated',status:'queued',created:new Date().toISOString()}}};
+    renderResult(savedJobForTest);
+  `,ctx);
+  const html=vm.runInContext('app.innerHTML',ctx);
+  assert.equal((html.match(/data-pose-image=/g)||[]).length,3);
+  assert.match(html,/下载全部 3 张/);
+  assert.doesNotMatch(html,/id="result-reference"|src="(?:null|undefined)"/);
+  assert.equal(vm.runInContext('poseProgress({...savedJobForTest,images:["/out-1"]})',ctx),'已生成 1 / 3 张');
+  vm.runInContext('regenerateButton.onclick()',ctx);
+  await new Promise(resolve=>setImmediate(resolve));
+  const body=JSON.parse(JSON.stringify(vm.runInContext('calls[0]',ctx)));
+  assert.equal(body.workflowType,'remake');
+  assert.deepEqual(body.workflowConfig,{clothing_mode:'multi',output_count:3,instruction:'棕色皮鞋'});
+  assert.deepEqual(body.inputImages.map(item=>item.role),['upper','lower','model','detail']);
+  assert.deepEqual(body.inputImages.map(item=>item.image),['data:image/jpeg;base64,input-1','data:image/jpeg;base64,input-2','data:image/jpeg;base64,input-3','data:image/jpeg;base64,input-4']);
+  assert.equal(body.inputImages[3].garmentRole,'lower');
+  assert.equal(body.model,'male');
+  assert.equal(body.reference,undefined);
+  assert.equal(vm.runInContext('location.hash',ctx),'#job/regenerated');
+});
+
 test('try-on gallery is labeled as try-on rather than pose variation',async()=>{
   const ctx=await context();
   vm.runInContext(`renderResult({id:'job',workflowType:'tryon',workflowConfig:{clothing_mode:'multi',output_count:2},inputImages:[{role:'lower',url:'/lower'}],images:['/out-1','/out-2'],image:'/out-1',original:'/lower',model:'female',date:'today',status:'succeeded'})`,ctx);
@@ -774,4 +955,54 @@ test('try-on gallery is labeled as try-on rather than pose variation',async()=>{
   await vm.runInContext('renderRoute()',ctx);
   assert.equal(vm.runInContext('screen',ctx),'my');
   assert.match(vm.runInContext('app.innerHTML',ctx),/data-my-tab="works"/);
+});
+
+test('studio demo routes load matching samples on refresh without creating private jobs',async()=>{
+  const ctx=await context('#demo/pose/4');
+  const html=vm.runInContext('app.innerHTML',ctx);
+  assert.match(html,/演示样例/);
+  assert.match(html,/assets\/demo\/pose-original-1\.svg/);
+  assert.match(html,/assets\/demo\/pose-result-1d\.svg/);
+  assert.equal((html.match(/data-pose-image=/g)||[]).length,4);
+  assert.equal(vm.runInContext('history.length',ctx),0);
+  assert.doesNotMatch(html,/Invalid Date|mockup\/assets/);
+  vm.runInContext(`api=async()=>{throw Error('demo must not call the job API')};location.hash='#demo/background/beach'`,ctx);
+  await vm.runInContext('renderRoute()',ctx);
+  assert.match(vm.runInContext('app.innerHTML',ctx),/assets\/demo\/bg-result-beach\.svg/);
+  assert.equal(vm.runInContext("getDemoResult('pose',8)",ctx),null);
+  assert.equal(vm.runInContext("getDemoResult('background','cafe')",ctx),null);
+});
+
+test('studio presets keep their mode in the URL and preserve a server demo notice',async()=>{
+  const ctx=await context();
+  vm.runInContext(`
+    notice={hidden:true};
+    originalGet=document.getElementById;
+    document.getElementById=id=>id==='service-mode-notice'?notice:originalGet(id);
+    serverGenerationMode='demo';
+    setDemoMode(false);
+    applyStudioPreset('ecommerce');
+  `,ctx);
+  assert.equal(vm.runInContext('location.hash',ctx),'#variations/background');
+  assert.equal(vm.runInContext('notice.hidden',ctx),false);
+  assert.equal(vm.runInContext('studioState.scene',ctx),'white');
+});
+
+test('settings and studio share the demo switch without leaving the current page',async()=>{
+  const ctx=await context();
+  vm.runInContext(`
+    demoStorage=new Map([['yipai-demo-mode','true']]);
+    localStorage.getItem=key=>demoStorage.get(key)??null;
+    localStorage.setItem=(key,value)=>demoStorage.set(key,value);
+    screen='my';
+    toggleDemoMode();
+  `,ctx);
+  assert.equal(vm.runInContext('isDemoMode()',ctx),false);
+  assert.equal(vm.runInContext('screen',ctx),'my');
+  vm.runInContext('toggleDemoMode()',ctx);
+  assert.equal(vm.runInContext('isDemoMode()',ctx),true);
+  vm.runInContext("location.hash='#variations/pose'",ctx);
+  await vm.runInContext('renderRoute()',ctx);
+  assert.doesNotMatch(vm.runInContext('app.innerHTML',ctx),/id="studio-generate" disabled/);
+  assert.equal(vm.runInContext('studioState.upload',ctx),'');
 });

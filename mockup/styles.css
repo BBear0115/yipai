@@ -83,6 +83,18 @@ p { line-height:1.7; }
 .profile-edit svg { width:20px; height:20px; }
 .header-actions { display:flex; gap:8px; align-items:center; }
 .eyebrow { font-size:.875rem; color:var(--muted); line-height:1.5; }
+/* 积分显示 */
+.credits-display { display:flex; align-items:center; gap:8px; padding:8px 12px; background:var(--surface); border:1px solid var(--line); border-radius:24px; font-size:.875rem; transition:all .2s ease; }
+.credits-display:hover { background:var(--surface-raised); }
+.credits-avatar { display:grid; place-items:center; width:28px; height:28px; border-radius:50%; background:var(--accent-soft); color:var(--accent); flex-shrink:0; }
+.credits-avatar svg { width:16px; height:16px; }
+.credits-text { color:var(--text); white-space:nowrap; }
+.credits-text strong { font-weight:650; color:var(--accent); }
+.credits-display.credits-low .credits-text strong { color:#ffa94d; }
+.credits-display.credits-empty .credits-text strong { color:var(--danger); }
+.home-topbar .credits-display { background:#ffffff14; border-color:#ffffff1a; backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px); }
+.home-hero[data-tone="light"] .credits-display { background:#10121614; border-color:#1012161a; }
+.home-hero[data-tone="light"] .credits-text { color:#101216; }
 /* The create page fills exactly one screen: the hero takes whatever height the entry cards leave. */
 .with-dock .home-page { display:flex; flex-direction:column; padding-top:0; padding-bottom:calc(84px + env(safe-area-inset-bottom)); }
 .home-hero { position:relative; isolation:isolate; display:flex; flex:1 0 auto; flex-direction:column; min-height:300px; padding-top:env(safe-area-inset-top); }
@@ -162,7 +174,9 @@ p { line-height:1.7; }
 .empty-history { text-align:center; padding:28px 16px; font-size:.875rem; color:var(--muted); border:1px dashed var(--line); border-radius:var(--radius); line-height:1.6; }
 .empty-history p { margin:0; }
 .empty-history .text-button { margin-top:4px; color:var(--accent); font-weight:650; }
-.my-top { display:flex; justify-content:flex-end; align-items:center; min-height:56px; margin-right:-8px; padding-top:env(safe-area-inset-top); }
+.my-top { display:flex; justify-content:center; align-items:center; position:relative; min-height:56px; margin-right:-8px; padding-top:env(safe-area-inset-top); }
+.my-top .credits-display { flex:none; }
+.my-top #my-settings { position:absolute; right:0; }
 .my-top svg { width:24px; height:24px; }
 .my-head { display:flex; flex-direction:column; align-items:center; text-align:center; }
 .my-avatar { display:grid; place-items:center; width:96px; height:96px; border:1px solid var(--line); border-radius:50%; background:var(--accent-soft); color:var(--accent); font-size:2.25rem; font-weight:650; }
@@ -548,6 +562,45 @@ textarea.field-input { resize:vertical; min-height:140px; }
 .batch-remove:hover { background:#202124; }
 .batch-model-select { padding:16px 0; border-top:1px solid var(--line); }
 .batch-model-select .eyebrow { display:block; margin-bottom:12px; }
+
+/* Batch results styles */
+.batch-results-sheet { max-width:920px; max-height:calc(100dvh - 48px); }
+.batch-results-content { display:flex; flex-direction:column; gap:24px; }
+.batch-notice { display:flex; align-items:center; gap:12px; padding:12px 16px; background:var(--accent-soft); border:1px solid var(--accent); border-radius:var(--button-radius); color:var(--text); }
+.batch-notice svg { width:20px; height:20px; flex:none; color:var(--accent); }
+.batch-results-summary { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; padding:20px; background:var(--surface); border-radius:var(--radius); border:1px solid var(--line); }
+.batch-stat { text-align:center; }
+.batch-stat strong { display:block; font-size:2rem; font-weight:600; color:var(--text); margin-bottom:4px; }
+.batch-stat span { font-size:.875rem; color:var(--muted); }
+.batch-results-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:16px; max-height:50vh; overflow-y:auto; padding:4px; }
+.batch-result-card { position:relative; background:var(--surface); border:1px solid var(--line); border-radius:var(--button-radius); overflow:hidden; transition:all .2s; }
+.batch-result-card:hover { border-color:var(--accent); }
+.batch-result-image { position:relative; aspect-ratio:4/5; background:var(--bg); display:flex; align-items:center; justify-content:center; }
+.batch-result-image .image-frame { width:100%; height:100%; }
+.batch-result-image img { width:100%; height:100%; object-fit:cover; }
+.batch-result-spinner { width:100%; height:100%; display:flex; align-items:center; justify-content:center; }
+.batch-result-failed { width:100%; height:100%; display:flex; align-items:center; justify-content:center; color:var(--danger); }
+.batch-result-failed svg { width:40px; height:40px; }
+.batch-result-info { display:flex; align-items:center; justify-content:space-between; padding:10px 12px; gap:8px; }
+.batch-result-status { flex:1; min-width:0; }
+.batch-result-status .status-badge { font-size:.75rem; padding:4px 8px; }
+.batch-result-download { flex:none; width:32px; height:32px; padding:0; display:grid; place-items:center; background:var(--accent); color:var(--accent-ink); border-radius:6px; border:none; cursor:pointer; transition:all .15s; }
+.batch-result-download svg { width:16px; height:16px; stroke-width:2.5; }
+.batch-result-download:hover { background:var(--accent-strong); transform:scale(1.05); }
+.batch-result-download:active { transform:scale(.95); }
+.batch-results-actions { display:flex; gap:12px; }
+.batch-results-actions button { flex:1; }
+.batch-results-actions button svg { width:18px; height:18px; margin-right:6px; vertical-align:middle; }
+
+@media (max-width:767px) {
+  .batch-results-sheet { max-width:calc(100vw - 32px); }
+  .batch-results-grid { grid-template-columns:repeat(auto-fill,minmax(120px,1fr)); gap:12px; }
+  .batch-stat strong { font-size:1.5rem; }
+}
+
+@media (min-width:768px) {
+  .batch-results-grid { grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); }
+}
 
 @media (prefers-reduced-motion:reduce) {
   *,*::before,*::after { animation:none!important; transition:none!important; scroll-behavior:auto!important; }

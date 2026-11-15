@@ -2,6 +2,51 @@
 // 虚拟试穿走首页「开拍」，创作历史在「我的」，这里只负责这两个工作流。
 // 本文件先于 app.js 加载，因此不在顶层调用任何 app.js 的全局函数。
 
+// 演示模式样例数据
+const DEMO_SAMPLES = {
+  pose: [
+    {
+      original: 'assets/demo/pose-original-1.svg',
+      results: [
+        'assets/demo/pose-result-1a.svg',
+        'assets/demo/pose-result-1b.svg',
+        'assets/demo/pose-result-1c.svg',
+        'assets/demo/pose-result-1d.svg'
+      ],
+      count: 4
+    },
+    {
+      original: 'assets/demo/pose-original-2.svg',
+      results: [
+        'assets/demo/pose-result-2a.svg',
+        'assets/demo/pose-result-2b.svg',
+        'assets/demo/pose-result-2c.svg',
+        'assets/demo/pose-result-2d.svg',
+        'assets/demo/pose-result-2e.svg',
+        'assets/demo/pose-result-2f.svg'
+      ],
+      count: 6
+    }
+  ],
+  background: [
+    {
+      original: 'assets/demo/bg-original-1.svg',
+      scene: 'white',
+      result: 'assets/demo/bg-result-white.svg'
+    },
+    {
+      original: 'assets/demo/bg-original-2.svg',
+      scene: 'outdoor_street',
+      result: 'assets/demo/bg-result-street.svg'
+    },
+    {
+      original: 'assets/demo/bg-original-3.svg',
+      scene: 'beach',
+      result: 'assets/demo/bg-result-beach.svg'
+    }
+  ]
+};
+
 const STUDIO_MODES = {
   pose: {
     tab: '换姿势',
@@ -34,6 +79,28 @@ const STUDIO_POSE_COUNTS = [4, 6, 8];
 const STUDIO_MAX_BYTES = 20 * 1024 * 1024;
 const STUDIO_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 
+// 快速预设模板配置
+const STUDIO_PRESETS = [
+  {
+    id: 'ecommerce',
+    label: '电商标准',
+    icon: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 3v18"/>',
+    config: {mode: 'background', scene: 'white', poseCount: 4}
+  },
+  {
+    id: 'street',
+    label: '街拍风',
+    icon: '<path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><path d="M9 22V12h6v10"/>',
+    config: {mode: 'background', scene: 'outdoor_street', poseCount: 6}
+  },
+  {
+    id: 'magazine',
+    label: '杂志大片',
+    icon: '<path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/>',
+    config: {mode: 'pose', scene: 'indoor_minimal', poseCount: 8}
+  }
+];
+
 // History cards, task status and result pages name jobs with these.
 const workflowNames = {
   tryon: '虚拟试穿',
@@ -48,6 +115,34 @@ function workflowJobName(job) {
     return `背景替换${scene ? ` · ${scene.label}` : ''}`;
   }
   return workflowNames[job.workflowType] && job.workflowType !== 'tryon' ? workflowNames[job.workflowType] : `${modelName(job.model)}作品`;
+}
+
+// 演示模式状态管理
+function isDemoMode() {
+  try { return (localStorage.getItem('yipai_demo_mode') ?? localStorage.getItem('yipai-demo-mode')) === 'true'; } catch { return false; }
+}
+
+function setDemoMode(enabled) {
+  try { localStorage.setItem('yipai_demo_mode', enabled ? 'true' : 'false'); } catch { return; }
+  updateDemoModeUI();
+}
+
+function toggleDemoMode() {
+  setDemoMode(!isDemoMode());
+  if (screen === 'variations') renderVariations(studioState.mode);
+  toast(isDemoMode() ? '已开启演示模式' : '已关闭演示模式');
+}
+
+function updateDemoModeUI() {
+  const notice = document.getElementById('service-mode-notice');
+  const badge = document.getElementById('demo-mode-badge');
+  if (notice) {
+    notice.hidden = !isDemoMode() && serverGenerationMode !== 'demo';
+    notice.textContent = serverGenerationMode === 'demo'
+      ? '演示模式：生成按钮只展示固定样例，不会处理上传图片。'
+      : '创意裂变演示：展示固定样例，不会处理上传图片。';
+  }
+  if (badge) badge.classList.toggle('active', isDemoMode());
 }
 
 const studioState = {
@@ -92,7 +187,18 @@ function studioPayload() {
 
 function studioTabs() {
   const tabs = Object.entries(STUDIO_MODES).map(([key, mode]) => `<button class="mode-tab ${studioState.mode === key ? 'active' : ''}" type="button" data-studio-mode="${key}" aria-pressed="${studioState.mode === key}"><svg viewBox="0 0 24 24" aria-hidden="true">${mode.icon}</svg>${mode.tab}</button>`).join('');
-  return `<div class="mode-tabs" role="group" aria-label="裂变方式">${tabs}</div>`;
+  const demoBadge = `<button id="demo-mode-badge" class="demo-badge ${isDemoMode() ? 'active' : ''}" type="button" title="点击切换演示模式"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>演示</button>`;
+  return `<div class="mode-tabs-wrapper"><div class="mode-tabs" role="group" aria-label="裂变方式">${tabs}</div>${demoBadge}</div>`;
+}
+
+function studioPresets() {
+  const presetButtons = STUDIO_PRESETS.map(preset =>
+    `<button class="preset-chip" type="button" data-studio-preset="${preset.id}" aria-label="${escapeHtml(preset.label)}">
+      <svg viewBox="0 0 24 24" aria-hidden="true">${preset.icon}</svg>
+      <span>${escapeHtml(preset.label)}</span>
+    </button>`
+  ).join('');
+  return `<div class="studio-presets"><div class="studio-presets-label">快速预设</div><div class="preset-grid">${presetButtons}</div></div>`;
 }
 
 // Empty state is a picker: camera and album stacked on the left, recent finished works scrolling on the right.
@@ -122,12 +228,13 @@ function studioOptions() {
 function renderVariations(routeMode) {
   studioState.mode = studioModeOf(routeMode);
   const mode = STUDIO_MODES[studioState.mode];
-  const disabled = !studioState.upload || studioState.submitting;
+  const disabled = (!studioState.upload && !isDemoMode()) || studioState.submitting;
   const summary = studioState.mode === 'pose' ? `输出 ${studioState.poseCount} 张独立姿势图` : `输出一张${STUDIO_SCENES.find(scene => scene.value === studioState.scene)?.label || '白底'}背景图`;
-  app.innerHTML = `<section class="page detail-page variations-page">${subTop('创意裂变', home)}${studioTabs()}<p class="variations-caption">${escapeHtml(mode.caption)}</p><form id="studio-form" novalidate>${studioUploadField(mode)}${studioOptions()}<p class="studio-hint">${escapeHtml(mode.hint)}</p><div class="inline-error" role="alert" ${studioState.error ? '' : 'hidden'}>${escapeHtml(studioState.error)}</div><div class="bottom-action"><button class="primary" type="submit" id="studio-generate" ${disabled ? 'disabled' : ''}>${studioState.submitting ? '正在提交…' : `开始生成 ${icon('arrow')}`}</button><p class="helper">${summary}，完成后可在「我的」查看</p></div></form></section>`;
+  app.innerHTML = `<section class="page detail-page variations-page">${subTop('创意裂变', home)}${studioPresets()}${studioTabs()}<p class="variations-caption">${escapeHtml(mode.caption)}</p><form id="studio-form" novalidate>${studioUploadField(mode)}${studioOptions()}<p class="studio-hint">${escapeHtml(mode.hint)}</p><div class="inline-error" role="alert" ${studioState.error ? '' : 'hidden'}>${escapeHtml(studioState.error)}</div><div class="bottom-action"><button class="primary" type="submit" id="studio-generate" ${disabled ? 'disabled' : ''}>${studioState.submitting ? '正在提交…' : `开始生成 ${icon('arrow')}`}</button><p class="helper">${summary}，完成后可在「我的」查看</p></div></form></section>`;
   bindHeader(home);
   bindStudio();
   watchImages();
+  updateDemoModeUI();
   // Works arrive with the session; refresh the picker once they do.
   if (!jobsLoaded && !studioState.upload) sessionReady.then(() => { if (screen === 'variations' && jobsLoaded && !studioState.upload) renderVariations(studioState.mode); });
 }
@@ -145,15 +252,29 @@ function bindStudio() {
 
 function studioClick(event) {
   if (screen !== 'variations') return;
-  const target = event.target.closest('[data-studio-mode],[data-studio-upload],[data-studio-camera],[data-studio-work],[data-studio-remove],[data-studio-count],[data-studio-scene]');
+  const target = event.target.closest('#demo-mode-badge,[data-studio-mode],[data-studio-preset],[data-studio-upload],[data-studio-camera],[data-studio-work],[data-studio-remove],[data-studio-count],[data-studio-scene]');
   if (!target) return;
+  if (target.id === 'demo-mode-badge') { toggleDemoMode(); return; }
   if (target.hasAttribute('data-studio-mode')) { openStudioMode(target.dataset.studioMode); return; }
+  if (target.hasAttribute('data-studio-preset')) { applyStudioPreset(target.dataset.studioPreset); return; }
   if (target.hasAttribute('data-studio-upload')) { app.querySelector('#studio-file')?.click(); return; }
   if (target.hasAttribute('data-studio-camera')) { app.querySelector('#studio-camera')?.click(); return; }
   if (target.hasAttribute('data-studio-work')) { studioUseWork(target.dataset.studioWork); return; }
   if (target.hasAttribute('data-studio-remove')) { studioResetUpload(); return; }
   if (target.hasAttribute('data-studio-count')) { studioChoose('poseCount', Number(target.dataset.studioCount)); return; }
   if (target.hasAttribute('data-studio-scene')) studioChoose('scene', target.dataset.studioScene);
+}
+
+function applyStudioPreset(presetId) {
+  const preset = STUDIO_PRESETS.find(p => p.id === presetId);
+  if (!preset) return;
+  const {mode, scene, poseCount} = preset.config;
+  studioState.mode = studioModeOf(mode);
+  studioState.scene = scene;
+  studioState.poseCount = poseCount;
+  studioState.pending = null;
+  openStudioMode(studioState.mode);
+  toast(`已应用「${preset.label}」预设`);
 }
 
 function studioChange(event) {
@@ -242,9 +363,42 @@ async function studioReadFile(file) {
   if (screen === 'variations') renderVariations(studioState.mode);
 }
 
+// 演示模式：从样例数据中匹配合适的结果
+function getDemoResult(mode = studioState.mode, value = mode === 'pose' ? studioState.poseCount : studioState.scene) {
+  const samples = DEMO_SAMPLES[mode];
+  if (!samples || samples.length === 0) return null;
+
+  return samples.find(sample => mode === 'pose' ? sample.count === Number(value) : sample.scene === value) || null;
+}
+
+// Sample routes survive refresh and stay separate from server-backed works.
+function renderStudioDemo(mode, value) {
+  const demo = getDemoResult(mode, value);
+  if (!demo) { renderUnavailable('该配置暂无演示样例，请选择其他配置。', '#variations'); return; }
+  renderResult(normalizeJob({
+    id: `demo-${mode}-${value}`, localDemo: true, status: 'succeeded', created: new Date().toISOString(),
+    workflowType: mode === 'pose' ? 'pose_variation' : 'background_change',
+    workflowConfig: mode === 'pose' ? {pose_count: demo.count} : {scene_type: demo.scene},
+    model: 'female', original: demo.original,
+    image: mode === 'pose' ? demo.results[0] : demo.result,
+    images: mode === 'pose' ? demo.results : [demo.result]
+  }));
+}
+
 async function studioSubmit() {
   if (studioState.submitting) return;
-  if (!studioState.upload) { studioState.error = '请先上传图片'; renderVariations(studioState.mode); return; }
+  if (!studioState.upload && !isDemoMode()) { studioState.error = '请先上传图片'; renderVariations(studioState.mode); return; }
+
+  // 演示模式：直接展示预制样例
+  if (isDemoMode()) {
+    const demo = getDemoResult();
+    if (!demo) { studioState.error = '演示样例尚未准备，请关闭演示模式'; renderVariations(studioState.mode); return; }
+    const value = studioState.mode === 'pose' ? demo.count : demo.scene;
+    navigate(`#demo/${studioState.mode}/${value}`);
+    return;
+  }
+
+  // 真实模式：调用 API
   if (busy || submitting) { studioState.error = '已有图片正在生成，请完成后再提交。'; renderVariations(studioState.mode); return; }
   const submissionRoute = currentRoute;
   studioState.submitting = true; submitting = true;

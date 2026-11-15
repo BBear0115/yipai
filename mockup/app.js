@@ -35,15 +35,21 @@ const modelName = value => value === 'male' ? '男模特' : '女模特';
 const isPending = job => ['queued', 'running'].includes(job.status);
 const statusLabel = job => ({queued:'排队中', running:'生成中', failed:'生成失败', succeeded:'已完成'}[job.status] || '加载中');
 let model = 'female', nickname = '衣拍访客';
-try { model = localStorage.getItem('yipai-model') === 'male' ? 'male' : 'female'; nickname = localStorage.getItem('yipai-nickname') || nickname; } catch {}
+try {
+  model = localStorage.getItem('yipai-model') === 'male' ? 'male' : 'female';
+  nickname = localStorage.getItem('yipai-nickname') || nickname;
+} catch {}
 let history = [], posts = [], draft = null, active = null, screen = 'home';
 let busy = false, submitting = false, toastTimer, pollTimer, pendingSubmission = null;
 let currentRoute = '', routeVersion = 0, viewSignature = '', pollError = '';
 let sessionReady, sessionError = '', jobsLoaded = false;
+let serverGenerationMode = 'live';
 let carouselIndex = 0, carouselTimer;
 let allModels = [], selectedModelId = null;
 const scrollPositions = new Map();
 const publishDrafts = new Map();
+let progressStage = null;
+let resultCleanup = null;
 
 async function api(path, options = {}) {
   const response = await fetch(path, {...options, headers: {'Content-Type':'application/json', ...options.headers}});
@@ -100,6 +106,8 @@ function resultPage(job) { active = mergeJob(job); navigate(`#job/${job.id}`); }
 function publishPage(job) { active = job; navigate(`#publish/${job.id}`); }
 function openJob(job) { active = mergeJob(job); navigate(`#job/${job.id}`); }
 function setScreen(value, showDock = false) {
+  if (resultCleanup) { resultCleanup(); resultCleanup = null; }
+  if (value !== 'generating' && progressStage) { progressStage.destroy(); progressStage = null; }
   screen = value; dock.classList.toggle('contextual', !showDock);
   if (value !== 'home') stopHomeCarousel();
   app.classList.toggle('with-dock', showDock);
@@ -125,6 +133,7 @@ async function renderRoute() {
   if (parts[0] === 'home') { setScreen('home', true); renderCreate(); restore(); return; }
   if (parts[0] === 'my') { setScreen('my', true); renderMy(); restore(); return; }
   if (parts[0] === 'variations') { setScreen('variations'); renderVariations(parts[1]); restore(); return; }
+  if (parts[0] === 'demo') { renderStudioDemo(parts[1], parts[2]); restore(); return; }
   if (parts[0] === 'remake') { setScreen('remake'); renderRemake(); restore(); return; }
   if (parts[0] === 'history') {
     setScreen('my', true); renderMy(); restore(); return;
@@ -249,7 +258,7 @@ function stopHomeCarousel() {
 }
 // The slides bleed to the viewport edges behind the brand and copy, then fade into the page background.
 function homeHero() {
-  return `<div class="home-hero" id="home-hero"><div class="home-slides">${homeSlides.map((slide, index) => `<div class="home-slide ${index === carouselIndex ? 'current' : ''}" role="img" aria-label="${slide.alt}" aria-hidden="${index !== carouselIndex}" style="--slide-image:url('${slide.image}')"></div>`).join('')}</div><header class="topbar home-topbar"><a class="brand" href="#home"><span class="brand-symbol"><img class="on-dark" src="assets/yipai-symbol-dark.png" alt="" width="28" height="28"><img class="on-light" src="assets/yipai-symbol-light.png" alt="" width="28" height="28"></span>衣拍<span class="brand-note">每一件都值得被看见</span></a></header><p class="home-slogan">一张商品图，<br>拍出整季大片</p></div>`;
+  return `<div class="home-hero" id="home-hero"><div class="home-slides">${homeSlides.map((slide, index) => `<div class="home-slide ${index === carouselIndex ? 'current' : ''}" role="img" aria-label="${slide.alt}" aria-hidden="${index !== carouselIndex}" style="--slide-image:url('${slide.image}')"></div>`).join('')}</div><header class="topbar home-topbar"><a class="brand" href="#home"><span class="brand-symbol"><img class="on-dark" src="assets/yipai-symbol-dark.png" alt="" width="28" height="28"><img class="on-light" src="assets/yipai-symbol-light.png" alt="" width="28" height="28"></span>衣拍<span class="brand-note">每一件都值得被看见</span></a>${renderCreditsDisplay()}</header><p class="home-slogan">一张商品图，<br>拍出整季大片</p></div>`;
 }
 function startHomeCarousel() {
   stopHomeCarousel();
@@ -279,7 +288,7 @@ function bindHistory(root = app) {
 }
 const showsJobs = () => screen === 'home' || screen === 'my';
 function renderCreate() {
-  app.innerHTML = `<section class="page home-page">${homeHero()}<div class="home-body">${errorSlot}<div id="active-task"></div><section class="home-action-grid" aria-label="创作入口"><button id="start-create" class="home-action home-action-primary" type="button"><span class="home-action-icon">${icon('feature-shoot')}</span><span class="home-action-title">开拍</span><span class="home-action-copy">上传商品图<br>生成模特上身效果</span></button><button id="home-remake" class="home-action home-action-side home-action-remake" type="button"><span class="home-action-title">${icon('feature-remake')}拍同款</span><span class="home-action-copy">截图心仪的商品图<br>照着生成同款效果</span></button><button id="home-variations" class="home-action home-action-side home-action-variations" type="button"><span class="home-action-title">${icon('feature-variations')}创意裂变</span><span class="home-action-copy">一张商品图<br>裂变多种场景风格</span></button></section></div></section>`;
+  app.innerHTML = `<section class="page home-page">${homeHero()}<div class="home-body">${errorSlot}<div id="active-task"></div><section class="home-action-grid" aria-label="创作入口"><button id="start-create" class="home-action home-action-primary" type="button"><span class="home-action-icon">${icon('feature-shoot')}</span><span class="home-action-title">开拍</span><span class="home-action-copy">上传商品图<br>生成模特上身效果</span></button><button id="home-remake" class="home-action home-action-side home-action-remake" type="button"><span class="home-action-title">${icon('feature-remake')}拍同款</span><span class="home-action-copy">上传上下装搭配<br>也可参考照片拍同款</span></button><button id="home-variations" class="home-action home-action-side home-action-variations" type="button"><span class="home-action-title">${icon('feature-variations')}创意裂变</span><span class="home-action-copy">一张商品图<br>裂变多种场景风格</span></button></section></div></section>`;
   startHomeCarousel();
   document.querySelector('#home-remake').onclick = () => navigate('#remake');
   document.querySelector('#home-variations').onclick = () => navigate('#variations');
@@ -289,7 +298,7 @@ let myTab = 'works';
 const myTabs = [['works', '作品', 'profile-portfolio'], ['saved', '收藏', 'profile-bookmarks']];
 function renderMy() {
   const stat = (id, label) => `<div><dt>${label}</dt><dd id="${id}">-</dd></div>`;
-  app.innerHTML = `<section class="page my-page"><header class="my-top"><h1 class="visually-hidden">我的</h1><button class="icon-button" id="my-settings" aria-label="设置">${icon('profile-settings')}</button></header><div class="my-head"><span class="my-avatar" aria-hidden="true">${escapeHtml(nickname.slice(0, 1))}</span><div class="my-name"><strong>${escapeHtml(nickname)}</strong><button class="my-edit" id="edit-profile" type="button" aria-label="编辑昵称，当前为${escapeHtml(nickname)}">编辑</button></div><dl class="my-stats">${stat('stat-works', '作品')}${stat('stat-posts', '已发布')}${stat('stat-likes', '获赞')}</dl></div><div class="my-tabs" role="tablist">${myTabs.map(([key, label, glyph]) => `<button class="my-tab" role="tab" data-my-tab="${key}" aria-selected="${myTab === key}" aria-label="${label}">${icon(glyph)}</button>`).join('')}</div>${errorSlot}<div id="history-content" role="tabpanel"></div></section>`;
+  app.innerHTML = `<section class="page my-page"><header class="my-top">${renderCreditsDisplay()}<h1 class="visually-hidden">我的</h1><button class="icon-button" id="my-settings" aria-label="设置">${icon('profile-settings')}</button></header><div class="my-head"><span class="my-avatar" aria-hidden="true">${escapeHtml(nickname.slice(0, 1))}</span><div class="my-name"><strong>${escapeHtml(nickname)}</strong><button class="my-edit" id="edit-profile" type="button" aria-label="编辑昵称，当前为${escapeHtml(nickname)}">编辑</button></div><dl class="my-stats">${stat('stat-works', '作品')}${stat('stat-posts', '已发布')}${stat('stat-likes', '获赞')}</dl></div><div class="my-tabs" role="tablist">${myTabs.map(([key, label, glyph]) => `<button class="my-tab" role="tab" data-my-tab="${key}" aria-selected="${myTab === key}" aria-label="${label}">${icon(glyph)}</button>`).join('')}</div>${errorSlot}<div id="history-content" role="tabpanel"></div></section>`;
   document.querySelector('#my-settings').onclick = mySettings;
   document.querySelector('#edit-profile').onclick = editProfile;
   document.querySelectorAll('[data-my-tab]').forEach(tab => tab.onclick = () => {
@@ -303,7 +312,12 @@ function renderMy() {
   loadPosts().then(() => updateView(), () => {});
 }
 function mySettings() {
-  sheet('设置', '', [{label:'编辑昵称', action:editProfile}, {label:'取消'}]);
+  const demoLabel = isDemoMode() ? '创意裂变演示：开启' : '创意裂变演示：关闭';
+  sheet('设置', '', [
+    {label:'编辑昵称', action:editProfile},
+    {label:demoLabel, action:toggleDemoMode},
+    {label:'取消'}
+  ]);
 }
 function updateMyStats() {
   const mine = posts.filter(post => post.mine);
@@ -437,10 +451,19 @@ function refineState(job) {
 function waiting() {
   setScreen('generating');
   const job = active, source = job?.original || draft;
-  app.innerHTML = `<section class="page detail-page">${subTop('正在创作')}<div class="state-panel generation-panel">${source ? '<div class="task-preview" id="task-preview"></div>' : ''}<div class="status-line"><span class="eyebrow">${job ? escapeHtml(workflowJobName(job)) : modelName(model)}</span></div><h1 id="task-status">${job ? statusLabel(job) : '正在提交'}</h1><p id="task-progress" ${poseProgress(job) ? '' : 'hidden'}>${poseProgress(job)}</p><p>可以离开，完成后在「我的」查看。</p>${errorSlot}<button class="primary" id="leave">返回创作 ${icon('arrow')}</button></div></section>`;
+  const workflowType = job?.workflowType || 'tryon';
+  app.innerHTML = `<section class="page detail-page">${subTop('正在创作')}<div class="state-panel generation-panel">${source ? '<div class="task-preview" id="task-preview"></div>' : ''}<div class="status-line"><span class="eyebrow">${job ? escapeHtml(workflowJobName(job)) : modelName(model)}</span></div><h1 id="task-status">${job ? statusLabel(job) : '正在提交'}</h1><div id="progress-stage-container"></div><p id="task-progress" ${poseProgress(job) ? '' : 'hidden'}>${poseProgress(job)}</p>${errorSlot}<button class="primary" id="leave">返回创作 ${icon('arrow')}</button></div></section>`;
   bindHeader(); document.querySelector('#leave').onclick = home;
   refine = source && typeof refineFrame === 'function' ? refineFrame(document.querySelector('#task-preview'), source, '正在创作的商品') : null;
   refine?.update(refineState(job));
+
+  // 初始化进度动画
+  if (progressStage) progressStage.destroy();
+  const progressContainer = document.querySelector('#progress-stage-container');
+  if (progressContainer && typeof createProgressStage === 'function') {
+    progressStage = createProgressStage(progressContainer, { workflowType });
+  }
+
   if (pollError) pageError(pollError, app, () => void pollJobs());
 }
 function renderJob(job) {
@@ -462,9 +485,16 @@ async function pollJobs() {
       if (active.status === 'succeeded' && refine) {
         const job = active;
         const title = document.querySelector('#task-status'); if (title) title.textContent = statusLabel(job);
+        if (progressStage) {
+          const completedStage = progressStage;
+          completedStage.complete(() => { if (progressStage === completedStage) progressStage = null; });
+        }
         refine.reveal(job.images?.[0] || job.image, () => { if (screen === 'generating' && active?.id === job.id) renderJob(job); });
         refine = null;
-      } else if (!isPending(active)) renderJob(active);
+      } else if (!isPending(active)) {
+        if (progressStage) { progressStage.destroy(); progressStage = null; }
+        renderJob(active);
+      }
       else {
         refine?.update(refineState(active));
         const title = document.querySelector('#task-status'); if (title) title.textContent = statusLabel(active);
@@ -474,7 +504,14 @@ async function pollJobs() {
       }
     }
     updateView();
-    if (screen !== 'result' && history.some(job => job.status === 'succeeded' && ['running','queued'].includes(previous.get(job.id)))) toast('图片已生成，可在「我的」查看');
+    // 检测任务完成并扣减积分
+    const newlyCompleted = history.filter(job => job.status === 'succeeded' && ['running','queued'].includes(previous.get(job.id)));
+    if (newlyCompleted.length > 0) {
+      newlyCompleted.forEach(() => {
+        if (typeof onGenerationSuccess === 'function') onGenerationSuccess();
+      });
+      if (screen !== 'result') toast('图片已生成，可在「我的」查看');
+    }
   } catch (error) {
     pollError = '暂时连不上，任务可能仍在进行。';
     if (screen === 'generating') pageError(pollError, app, () => void pollJobs());
@@ -586,11 +623,16 @@ function renderResult(job) {
     ? job.images.map(image => typeof image === 'string' ? image : image?.url).filter(Boolean)
     : [job.image].filter(Boolean);
   let selectedPoseIndex = 0;
+  let compareMode = 'side-by-side'; // 'side-by-side' 或 'slider'
+  let sliderInstance = null;
+  resultCleanup = () => { sliderInstance?.destroy(); sliderInstance = null; };
   const inputLabel = jobInputLabel(job);
   const photoLabel = job.workflowType === 'remake' ? '拍同款' : job.workflowType === 'tryon' ? '虚拟试穿' : '姿势裂变';
-  const previewNotice = job.previewOnly && job.workflowType === 'background_change'
-    ? '<p class="preview-output-notice" role="status">这是一条旧的演示样例记录，未处理输入图片。点击重新生成可重新提交原图。</p>'
-    : '';
+  const previewNotice = job.localDemo
+    ? '<p class="preview-output-notice" role="status">演示样例：展示固定示意图，不处理上传图片，不会保存到作品。</p>'
+    : job.previewOnly && job.workflowType === 'background_change'
+      ? '<p class="preview-output-notice" role="status">这是一条旧的演示样例记录，未处理输入图片。点击重新生成可重新提交原图。</p>'
+      : '';
   const hasPoseGallery = Boolean(photoCount(job)) && poseImages.length > 1;
   const poseGallery = hasPoseGallery ? `<div class="pose-gallery" aria-label="${photoLabel}图片">
     <div class="pose-gallery-head"><p class="pose-gallery-count" aria-live="polite">第 <span id="pose-result-index">1</span> 张 / 共 ${poseImages.length} 张独立图片</p><button class="text-button" id="save-all" type="button">${icon('save')}下载全部 ${poseImages.length} 张</button></div>
@@ -599,9 +641,10 @@ function renderResult(job) {
     </div>
   </div>` : '';
   // The comparison toggle floats over the image on frosted glass; the actions sit in a glass bar pinned to the bottom.
-  app.innerHTML = `<section class="page detail-page result-page">${subTop('你的新作品', myPage, `<button class="icon-button" id="delete-job" aria-label="删除作品">${icon('trash')}</button>`)}<div class="result-layout"><div class="result-main"><div class="comparison-grid"><div class="result-image-column"><span class="desktop-image-label">${escapeHtml(outputTitle)}${hasPoseGallery ? ' · <span id="pose-result-label">1</span> / ' + poseImages.length : ''}</span><div class="result-stage"><div id="result-primary" role="button" tabindex="0" aria-label="全屏查看效果图">${photo(poseImages[0], hasPoseGallery ? `${photoLabel}第 1 张` : '带衣拍水印的模特展示图', 'result-art')}</div><div class="segmented glass" aria-label="图片对照"><button class="selected" id="effect-tab" aria-pressed="true">效果图</button><button id="original-tab" aria-pressed="false">${inputLabel}</button></div></div>${poseGallery}</div><div class="desktop-original"><span class="desktop-image-label">${inputLabel}</span><div role="button" tabindex="0" id="result-original" aria-label="全屏查看${inputLabel}">${photo(job.original, inputLabel, 'result-art')}</div></div></div></div><aside class="result-side"><div class="result-summary"><span class="eyebrow">完成这一次创作</span><h2>让细节，也经得起看。</h2>${job.post ? publishedCard(job.post) : '<p>发布前，对照原图检查颜色、图案和商品结构。</p>'}${job.reference ? `<div class="remake-reference" id="result-reference" role="button" tabindex="0" aria-label="查看参考图">${photo(job.reference, '参考图')}<span class="remake-reference-copy">参考图<small>点击放大，对照拍法</small></span></div>` : ''}${previewNotice}<span class="result-meta">${escapeHtml(outputMeta)} · ${escapeHtml(job.date)}</span></div>${errorSlot}<div class="result-actions"><button class="action-button glass" id="regenerate">${icon('refresh')}<span>重新生成</span></button><button class="action-button glass primary-action" id="save">${icon('save')}<span>保存图片</span></button><button class="action-button glass round-action" id="share" aria-label="分享转发">${icon('share')}</button></div></aside></div></section>`;
+  app.innerHTML = `<section class="page detail-page result-page">${subTop('你的新作品', myPage, `<button class="icon-button" id="delete-job" aria-label="删除作品">${icon('trash')}</button>`)}<div class="result-layout"><div class="result-main"><div class="comparison-mode-switch"><button class="mode-btn active" data-mode="side-by-side">并排对比</button><button class="mode-btn" data-mode="slider">滑块对比</button></div><div class="comparison-grid"><div class="result-image-column"><span class="desktop-image-label">${escapeHtml(outputTitle)}${hasPoseGallery ? ' · <span id="pose-result-label">1</span> / ' + poseImages.length : ''}</span><div class="result-stage"><div id="result-primary" role="button" tabindex="0" aria-label="全屏查看效果图">${photo(poseImages[0], hasPoseGallery ? `${photoLabel}第 1 张` : '带衣拍水印的模特展示图', 'result-art')}</div><div class="segmented glass" aria-label="图片对照"><button class="selected" id="effect-tab" aria-pressed="true">效果图</button><button id="original-tab" aria-pressed="false">${inputLabel}</button></div></div>${poseGallery}</div><div class="desktop-original"><span class="desktop-image-label">${inputLabel}</span><div role="button" tabindex="0" id="result-original" aria-label="全屏查看${inputLabel}">${photo(job.original, inputLabel, 'result-art')}</div></div></div></div><aside class="result-side"><div class="result-summary"><span class="eyebrow">完成这一次创作</span><h2>让细节，也经得起看。</h2>${job.post ? publishedCard(job.post) : '<p>发布前，对照原图检查颜色、图案和商品结构。</p>'}${job.reference ? `<div class="remake-reference" id="result-reference" role="button" tabindex="0" aria-label="查看参考图">${photo(job.reference, '参考图')}<span class="remake-reference-copy">参考图<small>点击放大，对照拍法</small></span></div>` : ''}${previewNotice}<span class="result-meta">${escapeHtml(outputMeta)} · ${escapeHtml(job.date)}</span></div>${errorSlot}<div class="result-actions"><button class="action-button glass" id="regenerate">${icon('refresh')}<span>重新生成</span></button><button class="action-button glass primary-action" id="save">${icon('save')}<span>保存图片</span></button><button class="action-button glass round-action" id="share" aria-label="分享转发">${icon('share')}</button></div></aside></div></section>`;
   bindHeader(myPage); let showingOriginal = false;
   document.querySelector('#delete-job').onclick = () => confirmDelete(job);
+  document.querySelector('#delete-job').hidden = Boolean(job.localDemo);
   document.querySelector('#open-post')?.addEventListener('click', communityPage);
   document.querySelector('#result-reference')?.addEventListener('click', () => openViewer({image:job.reference, original:job.original}, false, '参考图'));
   const selectedResult = () => hasPoseGallery ? {...job, image: poseImages[selectedPoseIndex], imageIndex: selectedPoseIndex + 1} : job;
@@ -615,14 +658,71 @@ function renderResult(job) {
     primary.setAttribute('aria-label', `全屏查看${original ? inputLabel : '效果图'}`);
     primary.innerHTML = photo(original ? job.original : poseImages[selectedPoseIndex], original ? inputLabel : hasPoseGallery ? `${photoLabel}第 ${selectedPoseIndex + 1} 张` : '带衣拍水印的模特展示图', original ? 'result-art result-input' : 'result-art'); watchImages(primary);
   };
+
+  // 对比模式切换
+  const switchMode = (mode) => {
+    compareMode = mode;
+    document.querySelectorAll('[data-mode]').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.mode === mode);
+    });
+
+    const primaryContainer = document.querySelector('#result-primary');
+    const comparisonGrid = document.querySelector('.comparison-grid');
+    const segmentedControl = comparisonGrid.querySelector('.segmented');
+
+    if (mode === 'slider') {
+      // 进入滑块模式
+      segmentedControl.style.display = 'none';
+      comparisonGrid.classList.add('slider-mode');
+      primaryContainer.removeAttribute('role');
+      primaryContainer.removeAttribute('tabindex');
+      primaryContainer.removeAttribute('aria-label');
+      primaryContainer.onclick = null;
+      primaryContainer.onkeydown = null;
+
+      if (sliderInstance) sliderInstance.destroy();
+      sliderInstance = createCompareSlider(
+        primaryContainer,
+        job.original,
+        poseImages[selectedPoseIndex],
+        {
+          originalLabel: inputLabel,
+          effectLabel: hasPoseGallery ? `${photoLabel}第 ${selectedPoseIndex + 1} 张` : '效果图',
+          initialPosition: 50
+        }
+      );
+    } else {
+      // 进入并排对比模式
+      segmentedControl.style.display = '';
+      comparisonGrid.classList.remove('slider-mode');
+      primaryContainer.setAttribute('role', 'button');
+      primaryContainer.setAttribute('tabindex', '0');
+      primaryContainer.onclick = view;
+      primaryContainer.onkeydown = viewKeydown;
+
+      if (sliderInstance) {
+        sliderInstance.destroy();
+        sliderInstance = null;
+      }
+
+      choose(showingOriginal);
+    }
+  };
+
+  document.querySelectorAll('[data-mode]').forEach(btn => {
+    btn.onclick = () => switchMode(btn.dataset.mode);
+  });
+
   document.querySelector('#effect-tab').onclick = () => choose(false);
   document.querySelector('#original-tab').onclick = () => choose(true);
-  const view = () => openViewer(showingOriginal ? job : selectedResult(), showingOriginal);
+  const view = () => { if (compareMode !== 'slider') openViewer(showingOriginal ? job : selectedResult(), showingOriginal); };
+  const viewKeydown = event => { if (['Enter',' '].includes(event.key)) { event.preventDefault(); view(); } };
   document.querySelector('#result-primary').onclick = view;
-  document.querySelector('#result-primary').onkeydown = event => { if (['Enter',' '].includes(event.key)) { event.preventDefault(); view(); } };
+  document.querySelector('#result-primary').onkeydown = viewKeydown;
   document.querySelector('#result-original').onclick = () => openViewer(job, true);
   document.querySelector('#result-original').onkeydown = event => { if (['Enter',' '].includes(event.key)) { event.preventDefault(); openViewer(job, true); } };
-  document.querySelector('#regenerate').onclick = () => void generate(job.original, job.model, regenerationWorkflow(job));
+  document.querySelector('#regenerate').onclick = () => job.localDemo ? navigate('#variations') : void generate(job.original, job.model, regenerationWorkflow(job));
+  if (job.localDemo) document.querySelector('#regenerate span').textContent = '返回创作';
   document.querySelector('#save').onclick = () => save(selectedResult());
   if (hasPoseGallery) {
     document.querySelectorAll('[data-pose-image]').forEach(button => button.onclick = () => {
@@ -634,24 +734,50 @@ function renderResult(job) {
       });
       document.querySelector('#pose-result-index').textContent = String(selectedPoseIndex + 1);
       document.querySelector('#pose-result-label').textContent = String(selectedPoseIndex + 1);
-      if (!showingOriginal) choose(false);
+
+      // 如果在滑块模式，更新滑块
+      if (compareMode === 'slider' && sliderInstance) {
+        switchMode('slider');
+      } else if (!showingOriginal) {
+        choose(false);
+      }
     });
     document.querySelector('#save-all').onclick = () => {
-      const link = document.createElement('a');
-      link.href = job.downloadAll || `/api/jobs/${job.id}/download.zip`;
-      link.download = `衣拍-${job.id}-全部${photoLabel}.zip`;
-      document.body.appendChild(link); link.click(); link.remove();
-      toast('已发起全部图片下载');
+      // 优先使用服务器提供的 ZIP 打包下载
+      if (job.downloadAll) {
+        const link = document.createElement('a');
+        link.href = job.downloadAll;
+        link.download = `衣拍-${job.id}-全部${photoLabel}.zip`;
+        document.body.appendChild(link); link.click(); link.remove();
+        toast('已发起全部图片下载');
+      } else if (typeof downloadMultipleImages === 'function') {
+        // 使用新的导出模块批量下载
+        downloadMultipleImages(job, poseImages);
+      } else {
+        // 降级方案：尝试服务器 ZIP 端点
+        const link = document.createElement('a');
+        link.href = `/api/jobs/${job.id}/download.zip`;
+        link.download = `衣拍-${job.id}-全部${photoLabel}.zip`;
+        document.body.appendChild(link); link.click(); link.remove();
+        toast('已发起全部图片下载');
+      }
     };
   }
   document.querySelector('#share').onclick = () => shareOptions(selectedResult());
   watchImages();
 }
 function save(result) {
-  const link = document.createElement('a'); link.href = result.image; link.download = `衣拍-${result.id}${result.imageIndex ? `-${result.imageIndex}` : ''}.jpg`;
-  document.body.appendChild(link); link.click(); link.remove(); toast('已发起下载，可在下载记录中查看');
+  // 使用新的导出模块生成带时间戳和任务类型的文件名
+  if (typeof downloadSingleImage === 'function') {
+    downloadSingleImage(result, result.image, result.imageIndex);
+  } else {
+    // 降级方案
+    const link = document.createElement('a'); link.href = result.image; link.download = `衣拍-${result.id}${result.imageIndex ? `-${result.imageIndex}` : ''}.jpg`;
+    document.body.appendChild(link); link.click(); link.remove(); toast('已发起下载，可在下载记录中查看');
+  }
 }
 function shareOptions(job) {
+  if (job.localDemo) { void share(job); return; }
   sheet('分享作品', '', [{label:'分享图片', filled:true, action:() => void share(job)}, {label:'发布到社区', action:() => publishPage(job)}, {label:'取消'}]);
 }
 async function share(result) {
@@ -684,7 +810,8 @@ function openOverlay(html, className = '') {
   layer.querySelector('button, input, [tabindex="0"]')?.focus(); return layer;
 }
 function closeOverlay(restoreFocus = true) {
-  document.querySelector('.modal-backdrop')?.remove(); document.body.classList.remove('overlay-open'); app.inert = false; dock.inert = false;
+  const layer = document.querySelector('.modal-backdrop');
+  layer?.onClose?.(); layer?.remove(); document.body.classList.remove('overlay-open'); app.inert = false; dock.inert = false;
   if (restoreFocus && overlayTrigger?.isConnected) overlayTrigger.focus(); overlayTrigger = null;
 }
 // Lets the user shoot the product now or choose existing photos; picking several from the library opens batch creation.
@@ -774,8 +901,8 @@ window.addEventListener('resize', () => {
 sessionReady = (async () => {
   try {
     const session = await api('/api/session');
-    const notice = document.querySelector('#service-mode-notice');
-    if (notice) notice.hidden = session.generationMode !== 'demo';
+    serverGenerationMode = session.generationMode || 'live';
+    updateDemoModeUI();
     await syncJobs(); sessionError = '';
   }
   catch (error) { sessionError = error.message; }

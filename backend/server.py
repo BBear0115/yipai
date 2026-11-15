@@ -346,8 +346,6 @@ def prepare_tryon_inputs(payload, visitor, workflow_type='tryon'):
     supplied = payload.get('inputImages')
     if explicit:
         validate_tryon_roles(supplied, config['clothing_mode'])
-        if workflow_type == 'remake' and not any(item['role'] == 'reference' for item in supplied):
-            raise ValueError('请上传参考图')
     else:
         if not isinstance(payload.get('image'), str):
             raise ValueError('请上传商品图片')
@@ -430,22 +428,45 @@ def watermark_font(size: int):
 
 
 def watermark(raw: bytes) -> bytes:
-    image = Image.open(BytesIO(raw)).convert('RGB')
-    draw = ImageDraw.Draw(image, 'RGBA')
-    font = watermark_font(max(20, image.width // 48))
-    # The default bitmap font has no CJK glyphs, so never draw Chinese with it.
-    label = '衣拍 · 人工智能生成' if font else 'Yipai · AI generated'
-    font = font or ImageFont.load_default()
-    bbox = draw.textbbox((0, 0), label, font=font)
-    width, height = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    pad = max(12, image.width // 70)
-    margin = max(16, image.width // 50)
-    x = image.width - width - pad * 2 - margin
-    y = image.height - height - pad * 2 - margin
-    draw.rounded_rectangle((x, y, x + width + pad * 2, y + height + pad * 2), radius=10, fill=(24, 24, 24, 180))
-    draw.text((x + pad, y + pad - bbox[1]), label, fill=(255, 255, 255, 255), font=font)
+    image = Image.open(BytesIO(raw)).convert('RGBA')
+    # Render the brand lockup at 3x, then scale it with the image's shorter side.
+    unit = 3
+    font = watermark_font(18 * unit)
+    if font:
+        brand, label = '衣拍', 'AI 生成'
+    else:
+        # The built-in font has no CJK glyphs.
+        brand, label = 'YIPAI', 'AI GENERATED'
+        font = ImageFont.load_default(size=18 * unit)
+    measure = ImageDraw.Draw(image)
+    brand_box = measure.textbbox((0, 0), brand, font=font)
+    label_box = measure.textbbox((0, 0), label, font=font)
+    brand_width = brand_box[2] - brand_box[0]
+    label_width = label_box[2] - label_box[0]
+    icon_size, gap = 24 * unit, 8 * unit
+    height = 40 * unit
+    brand_x = icon_size + gap
+    divider_x = brand_x + brand_width + 10 * unit
+    label_x = divider_x + 10 * unit
+    width = label_x + label_width
+    badge = Image.new('RGBA', (width, height))
+    draw = ImageDraw.Draw(badge)
+    with Image.open(STATIC / 'assets' / 'yipai-symbol-dark.png') as source:
+        symbol = source.convert('RGBA')
+        symbol = ImageOps.contain(symbol.crop(symbol.getbbox()), (icon_size, icon_size), Image.Resampling.LANCZOS)
+        symbol.putalpha(symbol.getchannel('A').point(lambda alpha: alpha * 220 // 255))
+    badge.alpha_composite(symbol, ((icon_size - symbol.width) // 2, (height - symbol.height) // 2))
+    draw.text((brand_x - brand_box[0], (height - brand_box[1] - brand_box[3]) // 2),
+              brand, fill=(255, 255, 255, 220), font=font)
+    draw.line((divider_x, 14 * unit, divider_x, 26 * unit), fill=(255, 255, 255, 110), width=unit)
+    draw.text((label_x - label_box[0], (height - label_box[1] - label_box[3]) // 2),
+              label, fill=(255, 255, 255, 220), font=font)
+    scale = min(image.size) / (900 * unit)
+    badge = badge.resize((max(1, round(width * scale)), max(1, round(height * scale))), Image.Resampling.LANCZOS)
+    margin = max(1, round(min(image.size) * 0.026))
+    image.alpha_composite(badge, (image.width - badge.width - margin, image.height - badge.height - margin))
     result = BytesIO()
-    image.save(result, 'JPEG', quality=92)
+    image.convert('RGB').save(result, 'JPEG', quality=92)
     return result.getvalue()
 
 
@@ -539,27 +560,28 @@ def remake_analysis(reference, products, request_id):
         return direct_reference_analysis()
 
 
-def generate_remake(job_id: str, workflow_config: dict, api_key: str, uuap_id: str | None, request_id: str):
-    inputs = tryon_job_inputs(job_id)
+def generate_remake(job_id: str, workflow_config: dict, api_key: str, uuap_id: str | None, request_id: str, inputs):
     if inputs:
         config = normalize_remake_config(workflow_config)
-        references = [item for item in inputs if item['role'] == 'reference']
+        references = [item for item in inputs if item['role'] == 'reference'] or [None]
         garments = [item for item in inputs if item['role'] in (*GARMENT_ROLES, 'auto')]
         stored = analysis_path(job_id)
-        cached = json.loads(stored.read_text(encoding='utf-8')) if stored.is_file() else {}
+        cached = json.loads(stored.read_text(encoding='utf-8')) if references[0] and stored.is_file() else {}
         analyses = cached.get('references', []) if isinstance(cached, dict) else []
         for group, reference in enumerate(references):
-            if len(analyses) <= group:
-                analyses.append(remake_analysis(reference['bytes'], garments, f'{request_id}-analysis-{group + 1}'))
-                temporary = stored.with_suffix('.tmp')
-                temporary.write_text(json.dumps({'references': analyses}, ensure_ascii=False), encoding='utf-8')
-                temporary.replace(stored)
-            analysis = analyses[group]
+            analysis = None
+            if reference:
+                if len(analyses) <= group:
+                    analyses.append(remake_analysis(reference['bytes'], garments, f'{request_id}-analysis-{group + 1}'))
+                    temporary = stored.with_suffix('.tmp')
+                    temporary.write_text(json.dumps({'references': analyses}, ensure_ascii=False), encoding='utf-8')
+                    temporary.replace(stored)
+                analysis = analyses[group]
             ordered = ordered_tryon_inputs(inputs, reference)
             cropped = [{**item, 'bytes': crop_box(item['bytes'], analysis.get('reference_box'))}
                        if item['role'] == 'reference' else
                        {**item, 'bytes': crop_box(item['bytes'], analysis.get('product_box'))}
-                       if item is garments[0] else item for item in ordered]
+                       if item is garments[0] else item for item in ordered] if analysis else ordered
             images = [image_data_url(item['bytes']) for item in cropped]
             identity = next((item for item in ordered if item['role'] == 'model'), None)
             for candidate in range(config['output_count']):
@@ -570,7 +592,7 @@ def generate_remake(job_id: str, workflow_config: dict, api_key: str, uuap_id: s
                 result = request_image(build_role_remake_prompt(model=workflow_config.get('model', 'female'),
                                        inputs=ordered, config=config, analysis=analysis, index=candidate),
                                        images, '1024x1536', api_key, uuap_id, f'{request_id}-{output_index}')
-                if identity:
+                if reference and identity:
                     result = request_image(build_tryon_identity_prompt(),
                                            [image_data_url(result), image_data_url(identity['bytes'])],
                                            '1024x1536', api_key, uuap_id, f'{request_id}-{output_index}-identity')
@@ -618,6 +640,7 @@ def generate_remake(job_id: str, workflow_config: dict, api_key: str, uuap_id: s
 def generate(job_id: str, model: str, workflow_type: str = 'tryon', workflow_config: dict | None = None):
     with SLOTS:
         request_id = str(uuid4())
+        remake_has_reference = False
         try:
             api_key, uuap_id = credentials()
             if not api_key:
@@ -662,7 +685,7 @@ def generate(job_id: str, model: str, workflow_type: str = 'tryon', workflow_con
                 return
             elif workflow_type == 'pose_variation':
                 pose_count = (workflow_config or {}).get('pose_count', 4)
-                if pose_count not in (4, 6, 8):
+                if type(pose_count) is not int or pose_count not in (4, 6, 8):
                     pose_count = 4
 
                 images = [image_data_url(data_path(job_id, 'input').read_bytes())]
@@ -680,7 +703,9 @@ def generate(job_id: str, model: str, workflow_type: str = 'tryon', workflow_con
                 update_job(job_id, status='succeeded')
                 return
             elif workflow_type == 'remake':
-                generate_remake(job_id, workflow_config or {}, api_key, uuap_id, request_id)
+                inputs = tryon_job_inputs(job_id)
+                remake_has_reference = any(item['role'] == 'reference' for item in inputs) or data_path(job_id, 'reference').is_file()
+                generate_remake(job_id, workflow_config or {}, api_key, uuap_id, request_id, inputs)
                 update_job(job_id, status='succeeded')
                 return
             elif workflow_type == 'background_change':
@@ -748,7 +773,7 @@ def generate(job_id: str, model: str, workflow_type: str = 'tryon', workflow_con
         except Exception as exc:
             if str(exc) in ('图片服务未配置', '模特参考图缺失', '反推服务未配置'):
                 message = str(exc)
-            elif workflow_type == 'remake' and not analysis_path(job_id).is_file():
+            elif remake_has_reference and not analysis_path(job_id).is_file():
                 message = '没能看懂这张参考图，请换一张更清楚的截图'
             else:
                 message = '图片生成失败，请重新生成'
@@ -783,7 +808,9 @@ def public_job(row, post: dict | None = None):
             result['inputImages'] = None
     if result.get('workflowType') == 'remake':
         refs = [item for item in result.get('inputImages', []) if item['role'] == 'reference']
-        result['reference'] = refs[0]['url'] if refs else f'/api/jobs/{job_id}/reference'
+        result['reference'] = refs[0]['url'] if refs else None
+        if not result.get('inputImages'):
+            result['reference'] = f'/api/jobs/{job_id}/reference'
     if result.get('workflowType') in ('tryon', 'pose_variation', 'remake'):
         maximum = MAX_REMAKE_OUTPUTS if result['workflowType'] == 'remake' else MAX_TRYON_OUTPUTS if result['workflowType'] == 'tryon' else 8
         result['images'] = [f'/api/jobs/{job_id}/result-{index}' for index in range(1, maximum + 1)
@@ -868,7 +895,12 @@ class Handler(SimpleHTTPRequestHandler):
             visitor = self.session()
             with connect() as db:
                 rows = db.execute('SELECT * FROM models WHERE is_preset=1 OR visitor=? ORDER BY is_preset DESC, sort_order ASC, created ASC', (visitor,)).fetchall()
-            return self.json_out(200, {'models': [{'id': row['id'], 'name': row['name'], 'gender': row['gender'], 'image': f'/api/models/{row["id"]}/image', 'isPreset': bool(row['is_preset'])} for row in rows]})
+            # Only include models with actual image files
+            models = []
+            for row in rows:
+                if model_path(row['id']).is_file():
+                    models.append({'id': row['id'], 'name': row['name'], 'gender': row['gender'], 'image': f'/api/models/{row["id"]}/image', 'isPreset': bool(row['is_preset'])})
+            return self.json_out(200, {'models': models})
         model_match = re.fullmatch(r'/api/models/([a-f0-9]{32})/image', self.path)
         if model_match:
             model_id = model_match.group(1)
@@ -981,9 +1013,10 @@ class Handler(SimpleHTTPRequestHandler):
                 raise ValueError('请求编号无效')
 
             if workflow_type == 'pose_variation':
-                if workflow_config and not isinstance(workflow_config, dict):
+                if workflow_config is not None and not isinstance(workflow_config, dict):
                     raise ValueError('工作流配置无效')
-                if (workflow_config or {}).get('pose_count', 4) not in (4, 6, 8):
+                pose_count = (workflow_config or {}).get('pose_count', 4)
+                if type(pose_count) is not int or pose_count not in (4, 6, 8):
                     raise ValueError('姿势数量必须是 4、6 或 8')
                 model = model or 'female'
             elif workflow_type == 'remake':

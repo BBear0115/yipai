@@ -5,9 +5,12 @@ let batchSubmitting = false;
 let batchJobs = [];
 
 // Opened from the photo library when several product photos are picked at once.
-function openBatchUpload(initialFiles = []) {
-  batchFiles.forEach(file => URL.revokeObjectURL(file.preview));
-  batchFiles = [];
+function openBatchUpload(initialFiles = [], keepPending = false) {
+  if (batchSubmitting) { toast('批量图片正在提交，请稍候'); return; }
+  if (!keepPending) {
+    batchFiles.forEach(file => URL.revokeObjectURL(file.preview));
+    batchFiles = [];
+  }
   const layer = openOverlay(`<section class="sheet batch-sheet" role="dialog" aria-modal="true" aria-labelledby="batch-title">
     <div class="sheet-heading">
       <h2 id="batch-title">批量作图</h2>
@@ -78,6 +81,7 @@ function openBatchUpload(initialFiles = []) {
 
     grid.querySelectorAll('[data-remove]').forEach(btn => {
       btn.onclick = () => {
+        if (batchSubmitting) return;
         const idx = parseInt(btn.dataset.remove);
         URL.revokeObjectURL(batchFiles[idx].preview);
         batchFiles.splice(idx, 1);
@@ -89,6 +93,7 @@ function openBatchUpload(initialFiles = []) {
   }
 
   function selectBatchModel(value) {
+    if (batchSubmitting) return;
     batchModel = value;
     layer.querySelectorAll('[data-batch-model]').forEach(button => {
       const selected = button.dataset.batchModel === batchModel;
@@ -99,6 +104,7 @@ function openBatchUpload(initialFiles = []) {
   }
 
   async function processFiles(files) {
+    if (batchSubmitting) return;
     const validFiles = [];
     for (const file of files) {
       if (batchFiles.length + validFiles.length >= 10) {
@@ -108,8 +114,9 @@ function openBatchUpload(initialFiles = []) {
       if (file.size > 20 * 1024 * 1024) continue;
       if (!file.type.match(/^image\/(jpeg|png|webp|heic|heif)/)) continue;
 
+      let url;
       try {
-        const url = URL.createObjectURL(file);
+        url = URL.createObjectURL(file);
         const img = await loadImage(url);
         const canvas = document.createElement('canvas');
         const scale = Math.min(1, 1200 / Math.max(img.width, img.height));
@@ -131,6 +138,7 @@ function openBatchUpload(initialFiles = []) {
           idempotencyKey: crypto.randomUUID()
         });
       } catch (e) {
+        if (url) URL.revokeObjectURL(url);
         continue;
       }
     }
@@ -147,6 +155,7 @@ function openBatchUpload(initialFiles = []) {
   layer.querySelector('#batch-select').onclick = () => fileInput.click();
   layer.querySelector('#batch-add').onclick = () => fileInput.click();
   layer.querySelector('#batch-clear').onclick = () => {
+    if (batchSubmitting) return;
     batchFiles.forEach(file => URL.revokeObjectURL(file.preview));
     batchFiles = [];
     updateBatchUI();
@@ -189,13 +198,15 @@ function openBatchUpload(initialFiles = []) {
     try {
       await sessionReady;
       const results = [];
+      const submittedFiles = new Set();
+      const submissionFiles = [...batchFiles];
       let successCount = 0;
       let queueFull = false;
 
-      for (let i = 0; i < batchFiles.length; i++) {
+      for (let i = 0; i < submissionFiles.length; i++) {
         if (queueFull) break;
 
-        const file = batchFiles[i];
+        const file = submissionFiles[i];
         try {
           const response = await api('/api/jobs', {
             method: 'POST',
@@ -207,6 +218,7 @@ function openBatchUpload(initialFiles = []) {
           });
 
           results.push(response.job);
+          submittedFiles.add(file);
           successCount++;
 
           if (response.queueCount >= 10) {
@@ -222,23 +234,18 @@ function openBatchUpload(initialFiles = []) {
         }
       }
 
-      batchFiles.forEach(file => URL.revokeObjectURL(file.preview));
-      batchFiles = [];
+      batchFiles.filter(file => submittedFiles.has(file)).forEach(file => URL.revokeObjectURL(file.preview));
+      batchFiles = batchFiles.filter(file => !submittedFiles.has(file));
       batchSubmitting = false;
 
       if (successCount > 0) {
         results.forEach(job => mergeJob(job));
         closeOverlay();
-        myPage();
-        toast(queueFull
-          ? `已提交 ${successCount} 张，其余请等待队列完成后再提交`
-          : `已提交 ${successCount} 张图片，可在「我的」查看`
-        );
+        openBatchResults(results, batchFiles.length ? `已提交 ${successCount} 张，${batchFiles.length} 张未提交，可稍后重试` : null);
         schedulePoll();
       } else {
         pageError('提交失败，请稍后重试', layer);
-        submitBtn.disabled = false;
-        submitBtn.textContent = `生成 ${batchFiles.length} 张图片`;
+        updateBatchUI();
       }
     } catch (error) {
       batchSubmitting = false;
@@ -248,6 +255,194 @@ function openBatchUpload(initialFiles = []) {
     }
   };
 
+  if (keepPending) updateBatchUI();
   if (initialFiles.length) void processFiles(initialFiles);
   watchImages(layer);
+}
+
+// Batch results display - shows generation progress and download options
+function openBatchResults(jobIds, noticeMessage = null) {
+  const jobs = jobIds.map(job => history.find(h => h.id === job.id) || job);
+
+  const layer = openOverlay(`<section class="sheet batch-results-sheet" role="dialog" aria-modal="true" aria-labelledby="batch-results-title">
+    <div class="sheet-heading">
+      <h2 id="batch-results-title">批量生成进度</h2>
+      <button class="icon-button" data-close aria-label="关闭">${icon('close')}</button>
+    </div>
+    <div class="batch-results-content">
+      ${noticeMessage ? `<div class="batch-notice">${icon('warning')}<span>${escapeHtml(noticeMessage)}</span></div>` : ''}
+      <div class="batch-results-summary">
+        <div class="batch-stat">
+          <strong id="batch-completed-count">0</strong>
+          <span>已完成</span>
+        </div>
+        <div class="batch-stat">
+          <strong id="batch-pending-count">${jobs.filter(isPending).length}</strong>
+          <span>生成中</span>
+        </div>
+        <div class="batch-stat">
+          <strong id="batch-failed-count">0</strong>
+          <span>失败</span>
+        </div>
+      </div>
+      <div class="batch-results-grid" id="batch-results-grid"></div>
+      <div class="batch-results-actions">
+        <button class="primary" id="batch-download-all" disabled>
+          ${icon('save')}批量下载已完成
+        </button>
+        <button class="secondary" id="batch-go-my">
+          前往我的作品
+        </button>
+        ${batchFiles.length ? '<button class="secondary" id="batch-retry-pending">重试未提交图片</button>' : ''}
+      </div>
+    </div>
+  </section>`, 'batch-results-overlay');
+
+  const grid = layer.querySelector('#batch-results-grid');
+  const completedCount = layer.querySelector('#batch-completed-count');
+  const pendingCount = layer.querySelector('#batch-pending-count');
+  const failedCount = layer.querySelector('#batch-failed-count');
+  const downloadAllBtn = layer.querySelector('#batch-download-all');
+
+  function updateBatchResults() {
+    const currentJobs = jobIds.map(job => history.find(h => h.id === job.id) || job);
+    const completed = currentJobs.filter(j => j.status === 'succeeded');
+    const pending = currentJobs.filter(isPending);
+    const failed = currentJobs.filter(j => j.status === 'failed');
+
+    completedCount.textContent = completed.length;
+    pendingCount.textContent = pending.length;
+    failedCount.textContent = failed.length;
+    downloadAllBtn.disabled = completed.length === 0;
+
+    grid.innerHTML = currentJobs.map((job, index) => {
+      const status = job.status;
+      const isCompleted = status === 'succeeded';
+      const isFailed = status === 'failed';
+      const isPendingJob = isPending(job);
+
+      return `
+        <div class="batch-result-card ${status}" data-job-id="${job.id}">
+          <div class="batch-result-image">
+            ${isCompleted ? photo(job.image, `生成结果 ${index + 1}`, '', true) : ''}
+            ${isPendingJob ? `<div class="batch-result-spinner"><span class="spinner small"></span></div>` : ''}
+            ${isFailed ? `<div class="batch-result-failed">${icon('warning')}</div>` : ''}
+          </div>
+          <div class="batch-result-info">
+            <div class="batch-result-status">
+              <span class="status-badge ${status}">${statusLabel(job)}</span>
+            </div>
+            ${isCompleted ? `
+              <button class="batch-result-download" data-download="${job.id}" aria-label="下载">
+                ${icon('save')}
+              </button>
+            ` : ''}
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    // Bind download buttons
+    grid.querySelectorAll('[data-download]').forEach(btn => {
+      btn.onclick = () => {
+        const job = currentJobs.find(j => j.id === btn.dataset.download);
+        if (job && job.status === 'succeeded') {
+          // 使用新的导出模块生成带时间戳和任务类型的文件名
+          if (typeof downloadSingleImage === 'function') {
+            downloadSingleImage(job);
+          } else {
+            const link = document.createElement('a');
+            link.href = job.image;
+            link.download = `衣拍-${job.id}.jpg`;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            toast('已发起下载');
+          }
+        }
+      };
+    });
+
+    // Bind image click to open viewer
+    grid.querySelectorAll('.batch-result-card.succeeded .image-frame').forEach(frame => {
+      const jobId = frame.closest('.batch-result-card').dataset.jobId;
+      const job = currentJobs.find(j => j.id === jobId);
+      if (job) {
+        frame.style.cursor = 'pointer';
+        frame.onclick = () => {
+          closeOverlay();
+          openJob(job);
+        };
+      }
+    });
+
+    watchImages(layer);
+  }
+
+  updateBatchResults();
+
+  // Poll for updates if any jobs are still pending
+  let pollInterval;
+  const startPolling = () => {
+    if (pollInterval) return;
+    pollInterval = setInterval(() => {
+      const currentJobs = jobIds.map(job => history.find(h => h.id === job.id) || job);
+      const stillPending = currentJobs.some(isPending);
+
+      if (!stillPending) {
+        clearInterval(pollInterval);
+        pollInterval = null;
+      }
+
+      updateBatchResults();
+    }, 3000);
+  };
+
+  if (jobs.some(isPending)) {
+    startPolling();
+  }
+
+  downloadAllBtn.onclick = () => {
+    const currentJobs = jobIds.map(job => history.find(h => h.id === job.id) || job);
+    const completed = currentJobs.filter(j => j.status === 'succeeded');
+
+    if (completed.length === 0) {
+      toast('暂无已完成的图片');
+      return;
+    }
+
+    // 使用新的导出模块批量下载多个作品
+    if (typeof downloadBatchJobs === 'function') {
+      downloadBatchJobs(completed);
+      return;
+    }
+
+    // 降级方案：逐个下载
+    completed.forEach((job, index) => {
+      setTimeout(() => {
+        const link = document.createElement('a');
+        link.href = job.image;
+        link.download = `衣拍-批量-${index + 1}.jpg`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+      }, index * 300); // Stagger downloads to avoid browser blocking
+    });
+
+    toast(`正在下载 ${completed.length} 张图片`);
+  };
+
+  layer.querySelector('#batch-go-my').onclick = () => {
+    closeOverlay();
+    myPage();
+  };
+  layer.querySelector('#batch-retry-pending')?.addEventListener('click', () => openBatchUpload([], true));
+
+  // Clean up polling when overlay closes
+  layer.onClose = () => {
+    if (pollInterval) {
+      clearInterval(pollInterval);
+      pollInterval = null;
+    }
+  };
 }

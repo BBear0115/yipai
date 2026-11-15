@@ -1,10 +1,11 @@
-"""拍同款：先用视觉模型反推参考图的拍法，再让模特穿上用户的商品，按这个拍法生成 3 张。"""
+"""拍同款：按可选参考图的拍法生成，未提供参考时围绕商品智能搭配。"""
 from __future__ import annotations
 
 import json
 import re
 
 from .tryon import build_tryon_prompt, normalize_tryon_config
+from .shooting_plans import build_auto_shooting_plan, get_available_scenes, build_scene_prompt, get_styling_guidance
 
 REMAKE_COUNT = 3
 MAX_REMAKE_OUTPUTS = 8 * REMAKE_COUNT
@@ -21,7 +22,18 @@ def normalize_remake_config(value):
     source = value.get('model_source', 'preset')
     if source not in ('preset', 'work'):
         raise ValueError('请选择模特')
-    config.update(output_count=count, model_source=source)
+    shooting_style = value.get('shooting_style', 'auto')
+    valid_styles = {'auto', 'studio', 'lookbook', 'lifestyle', *get_available_scenes()}
+    if not isinstance(shooting_style, str) or shooting_style not in valid_styles:
+        raise ValueError('拍摄方向无效')
+    pose_preference = value.get('pose_preference', 'balanced')
+    if pose_preference not in ('balanced', 'frontal', 'dynamic', 'side'):
+        raise ValueError('姿势偏好无效')
+    styling_preset = value.get('styling_preset', 'minimal')
+    if styling_preset not in ('minimal', 'coordinated', 'seasonal'):
+        raise ValueError('搭配方案无效')
+    config.update(output_count=count, model_source=source, shooting_style=shooting_style,
+                  pose_preference=pose_preference, styling_preset=styling_preset)
     return config
 
 
@@ -135,12 +147,35 @@ def build_remake_prompt(analysis: dict, index: int, keep_model: bool) -> str:
 
 
 def build_role_remake_prompt(model, inputs, config, analysis, index):
-    """Apply the reference's shooting plan while keeping garment and detail roles separate."""
+    """Keep garment roles intact, with an optional reference shooting plan."""
     prompt = build_tryon_prompt(model, inputs, config, index, reference_plan=True,
                                product_identity=config.get('model_source') == 'work')
+
+    # Apply styling guidance
+    styling_preset = config.get('styling_preset', 'minimal')
+    styling_guidance = get_styling_guidance(styling_preset)
+    prompt += f'\n搭配要求：{styling_guidance}'
+
+    if analysis is None:
+        style = config.get('shooting_style', 'auto')
+        pose_pref = config.get('pose_preference', 'balanced')
+        # Use new scene system if it's a scene ID, otherwise fall back to legacy
+        if style in get_available_scenes():
+            return prompt + f'\n本张拍摄方案：{build_scene_prompt(style, index, pose_pref)}'
+        else:
+            return prompt + f'\n本张拍摄方案：{build_auto_shooting_plan(index, style, pose_pref)}'
+
+    # With reference analysis: apply pose preference as guidance
     fields = [('目标商品', 'product_note'), ('景别与机位', 'shot'), ('姿势', 'pose'), ('搭配造型', 'styling'),
               ('场景', 'scene'), ('光线', 'lighting'), ('色调', 'color'), ('整体风格', 'mood')]
     plan = '\n'.join(f'- {label}：{analysis[key]}' for label, key in fields)
+
+    pose_pref = config.get('pose_preference', 'balanced')
+    from .shooting_plans import POSE_MODIFIERS
+    modifier = POSE_MODIFIERS.get(pose_pref, '')
+    if modifier:
+        plan += f'\n- 姿势调整要求：{modifier}与参考姿势冲突时优先保证商品完整可见。'
+
     if config.get('model_source') == 'work':
         product_number = next(number for number, item in enumerate(inputs, 1) if item['role'] in ('upper', 'lower', 'single', 'auto'))
         prompt += f'\n出镜人物沿用图{product_number}商品作品中的模特，保留其脸部身份和发型，不沿用画面参考中的人物。'
