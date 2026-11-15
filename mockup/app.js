@@ -258,7 +258,7 @@ function stopHomeCarousel() {
 }
 // The slides bleed to the viewport edges behind the brand and copy, then fade into the page background.
 function homeHero() {
-  return `<div class="home-hero" id="home-hero"><div class="home-slides">${homeSlides.map((slide, index) => `<div class="home-slide ${index === carouselIndex ? 'current' : ''}" role="img" aria-label="${slide.alt}" aria-hidden="${index !== carouselIndex}" style="--slide-image:url('${slide.image}')"></div>`).join('')}</div><header class="topbar home-topbar"><a class="brand" href="#home"><span class="brand-symbol"><img class="on-dark" src="assets/yipai-symbol-dark.png" alt="" width="28" height="28"><img class="on-light" src="assets/yipai-symbol-light.png" alt="" width="28" height="28"></span>衣拍<span class="brand-note">每一件都值得被看见</span></a>${renderCreditsDisplay()}</header><p class="home-slogan">一张商品图，<br>拍出整季大片</p></div>`;
+  return `<div class="home-hero" id="home-hero"><div class="home-slides">${homeSlides.map((slide, index) => `<div class="home-slide ${index === carouselIndex ? 'current' : ''}" role="img" aria-label="${slide.alt}" aria-hidden="${index !== carouselIndex}" style="--slide-image:url('${slide.image}')"></div>`).join('')}</div><header class="topbar home-topbar"><a class="brand" href="#home"><span class="brand-symbol"><img class="on-dark" src="assets/yipai-symbol-dark.png" alt="" width="28" height="28"><img class="on-light" src="assets/yipai-symbol-light.png" alt="" width="28" height="28"></span>衣拍<span class="brand-note">每一件都值得被看见</span></a></header><p class="home-slogan">一张商品图，<br>拍出整季大片</p></div>`;
 }
 function startHomeCarousel() {
   stopHomeCarousel();

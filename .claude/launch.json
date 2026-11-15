@@ -2,6 +2,18 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "yipai-live",
+      "runtimeExecutable": "/Users/dxm/Documents/临时/yipai/.venv/bin/python3",
+      "runtimeArgs": [
+        "-m",
+        "backend.server"
+      ],
+      "env": {
+        "YIPAI_PORT": "8018"
+      },
+      "port": 8018
+    },
+    {
       "name": "yipai-preview",
       "runtimeExecutable": "python3",
       "runtimeArgs": [

@@ -48,7 +48,7 @@ function feedPost(post) {
 }
 function renderCommunity() {
   const all = [...posts, ...examples];
-  app.innerHTML = `<section class="page community-page"><header class="topbar"><h1 class="page-title">社区</h1>${renderCreditsDisplay()}</header>${errorSlot}<div class="feed" data-signature="${escapeHtml(JSON.stringify(posts.map(post => post.id)))}">${all.map(feedPost).join('')}</div>${all.length ? '' : '<div class="empty-history">社区还没有作品，完成创作后可以分享你的效果。</div>'}</section>`;
+  app.innerHTML = `<section class="page community-page"><header class="topbar"><h1 class="page-title">社区</h1></header>${errorSlot}<div class="feed" data-signature="${escapeHtml(JSON.stringify(posts.map(post => post.id)))}">${all.map(feedPost).join('')}</div>${all.length ? '' : '<div class="empty-history">社区还没有作品，完成创作后可以分享你的效果。</div>'}</section>`;
   const bind = (attribute, action) => document.querySelectorAll(`[data-${attribute}]`).forEach(el => {
     el.onclick = () => { const post = findPost(el.dataset[attribute]); if (post) action(post, el); };
     if (el.getAttribute('role') === 'button') el.onkeydown = event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); el.onclick(); } };
